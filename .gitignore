@@ -28,6 +28,11 @@ yarn-error.log*
 .env
 .env*.local
 
+# amplify (generated per developer/sandbox — recreated by `npx ampx sandbox`)
+.amplify
+amplify_outputs*
+amplifyconfiguration*
+
 # vercel
 .vercel
 

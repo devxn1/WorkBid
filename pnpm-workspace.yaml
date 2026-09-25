@@ -1,3 +1,8 @@
+allowBuilds:
+  '@aws-amplify/hosting': false
+  '@parcel/watcher': true
+  core-js: false
+  esbuild: true
 minimumReleaseAgeExclude:
   - '@next/*'
   - next
