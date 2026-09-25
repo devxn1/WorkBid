@@ -1,0 +1,239 @@
+"use client"
+
+import { use } from "react"
+import Link from "next/link"
+import { notFound, useRouter } from "next/navigation"
+import { ArrowLeft, CalendarClock, MapPin, MessageSquare, Wallet } from "lucide-react"
+import { useMarketplace } from "@/lib/store"
+import { categories } from "@/lib/mock-data"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Separator } from "@/components/ui/separator"
+import { StatusBadge } from "@/components/shared/status-badge"
+import { CategoryIcon } from "@/components/shared/category-icon"
+import { BidCard } from "@/components/shared/bid-card"
+import { PlaceBidDialog } from "@/components/shared/place-bid-dialog"
+import { ReviewDialog } from "@/components/shared/review-dialog"
+import { formatBudget, formatDate, relativeTime } from "@/lib/format"
+
+export default function ProjectDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
+  const router = useRouter()
+  const {
+    role,
+    getProject,
+    getBidsForProject,
+    getContractor,
+    currentContractorId,
+    acceptBid,
+    rejectBid,
+    startConversation,
+    completeProject,
+    reviews,
+  } = useMarketplace()
+
+  const project = getProject(id)
+
+  if (!project) return notFound()
+
+  const category = categories.find((c) => c.categoryId === project.categoryId)
+  const projectBids = getBidsForProject(project.projectId)
+  const myBid = projectBids.find((b) => b.contractorId === currentContractorId)
+  const isOpen = project.status === "open"
+  const hasReview = reviews.some((r) => r.projectId === project.projectId)
+  const awardedContractor = project.awardedContractorId ? getContractor(project.awardedContractorId) : undefined
+
+  function handleMessage(contractorId: string) {
+    const convId = startConversation(project!.projectId, contractorId)
+    router.push(`/messages?c=${convId}`)
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+      <Button variant="ghost" size="sm" render={<Link href="/projects" />} className="mb-4 -ml-2">
+        <ArrowLeft data-icon="inline-start" />
+        Back to projects
+      </Button>
+
+      <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
+        <div className="flex flex-col gap-6">
+          <div className="overflow-hidden rounded-xl border border-border bg-muted">
+            <img
+              src={project.images[0] || "/placeholder.svg"}
+              alt={project.title}
+              className="aspect-[16/9] w-full object-cover"
+            />
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={project.status} />
+              <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <CategoryIcon icon={category?.icon ?? "wrench"} size={15} className="text-primary" />
+                {category?.name}
+              </span>
+              <span className="text-sm text-muted-foreground">· Posted {relativeTime(project.createdAt)}</span>
+            </div>
+            <h1 className="font-heading text-3xl font-bold tracking-tight text-foreground text-balance">
+              {project.title}
+            </h1>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <MapPin width={15} height={15} aria-hidden="true" />
+                {project.location}
+              </span>
+              <span>Posted by {project.clientName}</span>
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="flex flex-col gap-3">
+            <h2 className="font-heading text-lg font-semibold text-foreground">Project description</h2>
+            <p className="whitespace-pre-line leading-relaxed text-muted-foreground text-pretty">
+              {project.description}
+            </p>
+          </div>
+
+          <Separator />
+
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-heading text-lg font-semibold text-foreground">
+                Bids{" "}
+                <span className="text-muted-foreground">({projectBids.length})</span>
+              </h2>
+            </div>
+            {projectBids.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                No bids yet. {isOpen && role === "contractor" ? "Be the first to bid!" : ""}
+              </p>
+            ) : role === "client" ? (
+              <div className="flex flex-col gap-4">
+                {projectBids.map((bid) => (
+                  <BidCard
+                    key={bid.bidId}
+                    bid={bid}
+                    contractor={getContractor(bid.contractorId)}
+                    showActions={isOpen}
+                    onAccept={() => acceptBid(bid.bidId)}
+                    onReject={() => rejectBid(bid.bidId)}
+                    onMessage={() => handleMessage(bid.contractorId)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {myBid ? (
+                  <BidCard bid={myBid} contractor={getContractor(myBid.contractorId)} />
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {projectBids.length} contractor{projectBids.length === 1 ? "" : "s"} bidding on this project.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Sidebar */}
+        <aside className="lg:sticky lg:top-20 lg:self-start">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Client budget</CardTitle>
+              <p className="font-heading text-2xl font-bold text-foreground">
+                {formatBudget(project.budgetMin, project.budgetMax)}
+              </p>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex flex-col gap-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-muted-foreground">
+                    <MessageSquare width={15} height={15} aria-hidden="true" />
+                    Bids received
+                  </span>
+                  <span className="font-medium text-foreground">{projectBids.length}</span>
+                </div>
+                {project.startDate && (
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <CalendarClock width={15} height={15} aria-hidden="true" />
+                      Start date
+                    </span>
+                    <span className="font-medium text-foreground">{formatDate(project.startDate)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-muted-foreground">
+                    <Wallet width={15} height={15} aria-hidden="true" />
+                    Status
+                  </span>
+                  <StatusBadge status={project.status} />
+                </div>
+              </div>
+
+              <Separator />
+
+              {role === "contractor" ? (
+                myBid ? (
+                  <div className="rounded-lg bg-primary/5 p-3 text-center text-sm">
+                    <p className="font-medium text-foreground">You&apos;ve bid on this project</p>
+                    <p className="text-muted-foreground">Bid status: {myBid.status}</p>
+                  </div>
+                ) : isOpen ? (
+                  <PlaceBidDialog
+                    project={project}
+                    trigger={<Button className="w-full">Place a bid</Button>}
+                  />
+                ) : (
+                  <Button className="w-full" disabled>
+                    Bidding closed
+                  </Button>
+                )
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {awardedContractor && (
+                    <div className="rounded-lg bg-muted p-3 text-sm">
+                      <p className="text-xs text-muted-foreground">Awarded to</p>
+                      <Link
+                        href={`/contractors/${awardedContractor.contractorId}`}
+                        className="font-medium text-foreground hover:underline"
+                      >
+                        {awardedContractor.businessName}
+                      </Link>
+                    </div>
+                  )}
+                  {project.status === "in_progress" && (
+                    <Button className="w-full" onClick={() => completeProject(project.projectId)}>
+                      Mark as complete
+                    </Button>
+                  )}
+                  {project.status === "completed" &&
+                    (hasReview ? (
+                      <div className="rounded-lg bg-success/10 p-3 text-center text-sm font-medium text-foreground">
+                        Review submitted
+                      </div>
+                    ) : (
+                      <ReviewDialog
+                        project={project}
+                        trigger={<Button className="w-full">Leave a review</Button>}
+                      />
+                    ))}
+                  {awardedContractor && (
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => handleMessage(awardedContractor.contractorId)}
+                    >
+                      Message contractor
+                    </Button>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </aside>
+      </div>
+    </div>
+  )
+}

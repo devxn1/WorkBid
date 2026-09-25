@@ -1,0 +1,212 @@
+"use client"
+
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
+import { useSearchParams } from "next/navigation"
+import { ArrowLeft, MessagesSquare, SendHorizontal } from "lucide-react"
+import { useMarketplace } from "@/lib/store"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
+import { StatusBadge } from "@/components/shared/status-badge"
+import { initials, relativeTime } from "@/lib/format"
+import { cn } from "@/lib/utils"
+
+function MessagesInner() {
+  const searchParams = useSearchParams()
+  const {
+    role,
+    conversations,
+    currentClientId,
+    currentContractorId,
+    getMessagesForConversation,
+    sendMessage,
+  } = useMarketplace()
+
+  const myConversations = useMemo(
+    () =>
+      conversations.filter((c) =>
+        role === "client" ? c.clientId === currentClientId : c.contractorId === currentContractorId,
+      ),
+    [conversations, role, currentClientId, currentContractorId],
+  )
+
+  const paramId = searchParams.get("c")
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [draft, setDraft] = useState("")
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (paramId && myConversations.some((c) => c.conversationId === paramId)) {
+      setActiveId(paramId)
+    } else if (!activeId && myConversations.length > 0) {
+      setActiveId(myConversations[0].conversationId)
+    }
+  }, [paramId, myConversations, activeId])
+
+  const active = myConversations.find((c) => c.conversationId === activeId) ?? null
+  const thread = active ? getMessagesForConversation(active.conversationId) : []
+  const myId = role === "client" ? currentClientId : currentContractorId
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+  }, [thread.length, activeId])
+
+  function handleSend(e: React.FormEvent) {
+    e.preventDefault()
+    if (!draft.trim() || !active) return
+    sendMessage(active.conversationId, draft.trim())
+    setDraft("")
+  }
+
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <h1 className="mb-6 font-heading text-3xl font-bold tracking-tight text-foreground">Messages</h1>
+
+      {myConversations.length === 0 ? (
+        <Empty className="rounded-xl border border-border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <MessagesSquare />
+            </EmptyMedia>
+            <EmptyTitle>No conversations yet</EmptyTitle>
+            <EmptyDescription>
+              {role === "client"
+                ? "Message a contractor from a bid to start a conversation."
+                : "Conversations with clients will appear here."}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <div className="grid h-[600px] overflow-hidden rounded-xl border border-border md:grid-cols-[300px_1fr]">
+          {/* Conversation list */}
+          <div
+            className={cn(
+              "flex flex-col overflow-y-auto border-border md:border-r",
+              active ? "hidden md:flex" : "flex",
+            )}
+          >
+            {myConversations.map((c) => {
+              const lastMsg = getMessagesForConversation(c.conversationId).slice(-1)[0]
+              const isActive = c.conversationId === activeId
+              return (
+                <button
+                  key={c.conversationId}
+                  type="button"
+                  onClick={() => setActiveId(c.conversationId)}
+                  className={cn(
+                    "flex items-start gap-3 border-b border-border p-4 text-left transition-colors hover:bg-muted/60",
+                    isActive && "bg-muted",
+                  )}
+                >
+                  <Avatar className="size-10 shrink-0">
+                    <AvatarImage
+                      src={c.contractorAvatar || "/placeholder.svg"}
+                      alt={role === "client" ? c.contractorName : c.clientName}
+                    />
+                    <AvatarFallback>
+                      {initials(role === "client" ? c.contractorName : c.clientName)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-foreground">
+                      {role === "client" ? c.contractorName : c.clientName}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">{c.projectTitle}</p>
+                    {lastMsg && (
+                      <p className="mt-1 truncate text-xs text-muted-foreground">{lastMsg.messageBody}</p>
+                    )}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Thread */}
+          {active ? (
+            <div className="flex flex-col">
+              <div className="flex items-center gap-3 border-b border-border p-4">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="md:hidden"
+                  onClick={() => setActiveId(null)}
+                  aria-label="Back to conversations"
+                >
+                  <ArrowLeft />
+                </Button>
+                <Avatar className="size-9">
+                  <AvatarImage
+                    src={active.contractorAvatar || "/placeholder.svg"}
+                    alt={role === "client" ? active.contractorName : active.clientName}
+                  />
+                  <AvatarFallback>
+                    {initials(role === "client" ? active.contractorName : active.clientName)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-foreground">
+                    {role === "client" ? active.contractorName : active.clientName}
+                  </p>
+                  <Link
+                    href={`/projects/${active.projectId}`}
+                    className="truncate text-xs text-muted-foreground hover:underline"
+                  >
+                    {active.projectTitle}
+                  </Link>
+                </div>
+                <StatusBadge status={active.projectStatus} />
+              </div>
+
+              <div ref={scrollRef} className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
+                {thread.map((m) => {
+                  const mine = m.senderId === myId
+                  return (
+                    <div key={m.messageId} className={cn("flex flex-col gap-1", mine ? "items-end" : "items-start")}>
+                      <div
+                        className={cn(
+                          "max-w-[80%] rounded-2xl px-4 py-2 text-sm",
+                          mine
+                            ? "rounded-br-sm bg-primary text-primary-foreground"
+                            : "rounded-bl-sm bg-muted text-foreground",
+                        )}
+                      >
+                        {m.messageBody}
+                      </div>
+                      <span className="px-1 text-[11px] text-muted-foreground">{relativeTime(m.sentAt)}</span>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <form onSubmit={handleSend} className="flex items-center gap-2 border-t border-border p-3">
+                <Input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="Type a message..."
+                  aria-label="Message"
+                />
+                <Button type="submit" size="icon" disabled={!draft.trim()} aria-label="Send message">
+                  <SendHorizontal />
+                </Button>
+              </form>
+            </div>
+          ) : (
+            <div className="hidden items-center justify-center text-sm text-muted-foreground md:flex">
+              Select a conversation to start chatting
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function MessagesPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-6xl px-4 py-8">Loading...</div>}>
+      <MessagesInner />
+    </Suspense>
+  )
+}
