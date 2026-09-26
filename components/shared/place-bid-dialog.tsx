@@ -30,20 +30,32 @@ export function PlaceBidDialog({ project, trigger }: PlaceBidDialogProps) {
   const [amount, setAmount] = useState("")
   const [days, setDays] = useState("")
   const [message, setMessage] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState("")
 
-  const valid = Number(amount) > 0 && Number(days) > 0 && message.trim().length >= 10
+  const valid =
+    Number(amount) > 0 && Number.isInteger(Number(days)) && Number(days) > 0 && message.trim().length >= 10
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!valid) return
-    addBid(project.projectId, {
-      amount: Number(amount),
-      estimatedDays: Number(days),
-      proposalMessage: message.trim(),
-    })
-    setAmount("")
-    setDays("")
-    setMessage("")
-    setOpen(false)
+    setError("")
+    setSubmitting(true)
+    try {
+      await addBid(project.projectId, {
+        amount: Number(amount),
+        estimatedDays: Number(days),
+        proposalMessage: message.trim(),
+      })
+      setAmount("")
+      setDays("")
+      setMessage("")
+      setOpen(false)
+    } catch (err) {
+      // e.g. "You already placed a bid on this project." from the server
+      setError(err instanceof Error ? err.message : "Couldn't submit your bid.")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -92,11 +104,16 @@ export function PlaceBidDialog({ project, trigger }: PlaceBidDialogProps) {
             />
             <FieldDescription>At least 10 characters. Sell yourself to win the job.</FieldDescription>
           </Field>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
         </FieldGroup>
         <DialogFooter>
           <DialogClose render={<Button variant="outline">Cancel</Button>} />
-          <Button onClick={handleSubmit} disabled={!valid}>
-            Submit bid
+          <Button onClick={handleSubmit} disabled={!valid || submitting}>
+            {submitting ? "Submitting…" : "Submit bid"}
           </Button>
         </DialogFooter>
       </DialogContent>

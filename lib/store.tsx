@@ -70,9 +70,9 @@ interface MarketplaceContextValue {
   unreadCount: number
   // actions
   addProject: (input: NewProjectInput) => Promise<Project>
-  addBid: (projectId: string, input: NewBidInput) => void
-  acceptBid: (bidId: string) => void
-  rejectBid: (bidId: string) => void
+  addBid: (projectId: string, input: NewBidInput) => Promise<void>
+  acceptBid: (bidId: string) => Promise<void>
+  rejectBid: (bidId: string) => Promise<void>
   completeProject: (projectId: string) => void
   addReview: (projectId: string, rating: number, reviewText: string) => void
   sendMessage: (conversationId: string, body: string) => void
@@ -90,6 +90,24 @@ interface MarketplaceContextValue {
 const MarketplaceContext = createContext<MarketplaceContextValue | null>(null)
 
 type ProjectRow = Schema["Project"]["type"]
+type BidRow = Schema["Bid"]["type"]
+
+/** Converts a database Bid row into the shape the pages use. */
+function toBid(row: BidRow): Bid {
+  return {
+    bidId: row.id,
+    projectId: row.projectId,
+    contractorId: row.contractorId,
+    amount: row.amount,
+    estimatedDays: row.estimatedDays,
+    proposalMessage: row.proposalMessage,
+    bidDate: row.createdAt,
+    status: row.status ?? "pending",
+  }
+}
+
+/** Contractor details loaded from the database (profile fields only; stats are calculated). */
+type ContractorInfo = Omit<Contractor, "rating" | "reviewCount" | "completedProjects">
 
 /** Converts a database Project row into the shape the pages use. */
 function toProject(row: ProjectRow): Project {
@@ -127,6 +145,9 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   // Bids are still in-memory until they move to the database; the sample bids pointed at
   // sample projects that no longer exist, so start empty.
   const [bids, setBids] = useState<Bid[]>([])
+  // Real contractors (by Cognito user id), loaded from ContractorProfile/UserProfile as needed.
+  const [contractorInfo, setContractorInfo] = useState<Record<string, ContractorInfo>>({})
+  const requestedContractors = useRef(new Set<string>())
   const [reviews, setReviews] = useState<Review[]>(seedReviews)
   const [conversations, setConversations] = useState<Conversation[]>(seedConversations)
   const [messages, setMessages] = useState<Message[]>(seedMessages)
@@ -191,6 +212,84 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     if (!authLoading) loadProjects()
   }, [authLoading, loadProjects])
 
+  // Bids: the database only returns the ones you're allowed to see —
+  // contractors get their own bids, clients get bids on their projects.
+  const loadBids = useCallback(async () => {
+    if (!signedInUserId) {
+      setBids([])
+      return
+    }
+    const client = generateClient<Schema>()
+    const rows: BidRow[] = []
+    let nextToken: string | null | undefined
+    try {
+      do {
+        const page = await client.models.Bid.list({ limit: 100, nextToken })
+        if (page.errors?.length) throw new Error(page.errors[0].message)
+        rows.push(...page.data)
+        nextToken = page.nextToken
+      } while (nextToken)
+      rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      setBids(rows.map(toBid))
+    } catch (err) {
+      console.error("Failed to load bids", err)
+    }
+  }, [signedInUserId])
+
+  useEffect(() => {
+    if (!authLoading) loadBids()
+  }, [authLoading, loadBids])
+
+  // Load names/business info for every contractor we need to show (bidders, awarded
+  // contractors, and yourself if you're a contractor).
+  useEffect(() => {
+    const ids = new Set<string>()
+    bids.forEach((b) => ids.add(b.contractorId))
+    projects.forEach((p) => p.awardedContractorId && ids.add(p.awardedContractorId))
+    if (authUser?.userType === "contractor") ids.add(authUser.userId)
+    const missing = [...ids].filter(
+      (id) => !requestedContractors.current.has(id) && !seedContractors.some((c) => c.contractorId === id),
+    )
+    if (missing.length === 0) return
+    missing.forEach((id) => requestedContractors.current.add(id))
+
+    const client = generateClient<Schema>()
+    const authMode = signedInUserId ? "userPool" : "identityPool"
+    Promise.all(
+      missing.map(async (id): Promise<[string, ContractorInfo]> => {
+        const [{ data: cp }, user] = await Promise.all([
+          client.models.ContractorProfile.get({ contractorId: id }, { authMode }),
+          // Guests can't read UserProfile; that's fine, ContractorProfile has the name.
+          signedInUserId ? client.models.UserProfile.get({ userId: id }).then((r) => r.data) : Promise.resolve(null),
+        ])
+        const personName = user ? `${user.firstName} ${user.lastName}`.trim() : ""
+        return [
+          id,
+          {
+            contractorId: id,
+            userId: id,
+            businessName: cp?.businessName || personName || "Contractor",
+            contractorName: cp?.contractorName || personName || "Contractor",
+            licenseNumber: cp?.licenseNumber ?? "",
+            yearsExperience: cp?.yearsExperience ?? 0,
+            location: cp?.location ?? "",
+            specialty: cp?.specialty ?? "",
+            verified: false,
+            avatar: cp?.avatar ?? user?.avatar ?? "",
+            about: cp?.about ?? "",
+            skills: (cp?.skills ?? []).filter((x): x is string => !!x),
+            services: (cp?.services ?? []).filter((x): x is string => !!x),
+          },
+        ]
+      }),
+    )
+      .then((entries) => setContractorInfo((prev) => ({ ...prev, ...Object.fromEntries(entries) })))
+      .catch((err) => {
+        missing.forEach((id) => requestedContractors.current.delete(id))
+        console.error("Failed to load contractor info", err)
+      })
+  }, [bids, projects, authUser, signedInUserId])
+
   /** Saves changes to a project the signed-in client owns and updates the local copy. */
   const updateProjectInDb = useCallback(
     async (projectId: string, changes: Partial<Pick<ProjectRow, "status" | "awardedContractorId" | "startDate" | "completionDate">>) => {
@@ -219,7 +318,20 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   const notifications = role === "client" ? clientNotifs : contractorNotifs
   const unreadCount = notifications.filter((n) => !n.read).length
 
-  const getContractor = useCallback((id: string) => seedContractors.find((c) => c.contractorId === id), [])
+  const getContractor = useCallback(
+    (id: string): Contractor | undefined => {
+      const info = contractorInfo[id]
+      if (!info) return seedContractors.find((c) => c.contractorId === id)
+      const theirReviews = reviews.filter((r) => r.contractorId === id)
+      return {
+        ...info,
+        rating: theirReviews.length ? theirReviews.reduce((sum, r) => sum + r.rating, 0) / theirReviews.length : 0,
+        reviewCount: theirReviews.length,
+        completedProjects: projects.filter((p) => p.awardedContractorId === id && p.status === "completed").length,
+      }
+    },
+    [contractorInfo, reviews, projects],
+  )
   const getProject = useCallback((id: string) => projects.find((p) => p.projectId === id), [projects])
   const getBidsForProject = useCallback((projectId: string) => bids.filter((b) => b.projectId === projectId), [bids])
   const getBidsByContractor = useCallback(
@@ -263,60 +375,41 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     [authUser],
   )
 
-  const addBid = useCallback(
-    (projectId: string, input: NewBidInput) => {
-      const existing = bids.find((b) => b.projectId === projectId && b.contractorId === CURRENT_CONTRACTOR_ID)
-      if (existing) {
-        toast.error("You already placed a bid on this project.")
+  /** Places a bid through the placeBid backend function. Throws with a readable message on failure. */
+  const addBid = useCallback(async (projectId: string, input: NewBidInput) => {
+    const client = generateClient<Schema>()
+    const { data, errors } = await client.mutations.placeBid({ projectId, ...input })
+    if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't submit your bid.")
+    setBids((prev) => [toBid(data), ...prev])
+    toast.success("Bid submitted", { description: "The client can now review your proposal." })
+  }, [])
+
+  /** Accepts or declines a bid through the respondToBid backend function, then reloads. */
+  const respondToBid = useCallback(
+    async (bidId: string, accept: boolean) => {
+      const client = generateClient<Schema>()
+      const { data, errors } = await client.mutations.respondToBid({ bidId, accept })
+      if (errors?.length || !data) {
+        toast.error(accept ? "Couldn't accept the bid" : "Couldn't decline the bid", {
+          description: errors?.[0]?.message ?? "Please try again.",
+        })
         return
       }
-      const bid: Bid = {
-        bidId: uid("b"),
-        projectId,
-        contractorId: CURRENT_CONTRACTOR_ID,
-        amount: input.amount,
-        estimatedDays: input.estimatedDays,
-        proposalMessage: input.proposalMessage,
-        bidDate: new Date().toISOString(),
-        status: "pending",
-      }
-      setBids((prev) => [bid, ...prev])
-      toast.success("Bid submitted", { description: "The client has been notified of your proposal." })
-    },
-    [bids],
-  )
-
-  const acceptBid = useCallback(
-    (bidId: string) => {
-      const bid = bids.find((b) => b.bidId === bidId)
-      if (!bid) return
-      setBids((prev) =>
-        prev.map((b) => {
-          if (b.projectId !== bid.projectId) return b
-          if (b.bidId === bidId) return { ...b, status: "accepted" as const }
-          return { ...b, status: "rejected" as const }
-        }),
-      )
-      updateProjectInDb(bid.projectId, {
-        status: "in_progress",
-        awardedContractorId: bid.contractorId,
-        startDate: new Date().toISOString(),
-      })
-        .then(() => {
-          const contractor = getContractor(bid.contractorId)
-          toast.success("Bid accepted", {
-            description: `${contractor?.businessName ?? "The contractor"} has been hired. The project is now in progress.`,
-          })
+      // Accepting also changes the project and the other bids, so reload both.
+      await Promise.all([loadBids(), loadProjects()])
+      if (accept) {
+        const contractor = getContractor(data.contractorId)
+        toast.success("Bid accepted", {
+          description: `${contractor?.businessName ?? "The contractor"} has been hired. The project is now in progress.`,
         })
-        .catch((err) => toast.error("Couldn't accept the bid", { description: err.message }))
+      } else {
+        toast("Bid declined")
+      }
     },
-    [bids, getContractor, updateProjectInDb],
+    [loadBids, loadProjects, getContractor],
   )
-
-  const rejectBid = useCallback((bidId: string) => {
-    setBids((prev) => prev.map((b) => (b.bidId === bidId ? { ...b, status: "rejected" as const } : b)))
-    toast("Bid declined")
-  }, [])
+  const acceptBid = useCallback((bidId: string) => respondToBid(bidId, true), [respondToBid])
+  const rejectBid = useCallback((bidId: string) => respondToBid(bidId, false), [respondToBid])
 
   const completeProject = useCallback(
     (projectId: string) => {
@@ -407,7 +500,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       setRole,
       currentUser,
       currentClientId: authUser?.userId ?? CURRENT_CLIENT_ID,
-      currentContractorId: CURRENT_CONTRACTOR_ID,
+      currentContractorId: authUser?.userType === "contractor" ? authUser.userId : CURRENT_CONTRACTOR_ID,
       projects,
       projectsLoading,
       bids,

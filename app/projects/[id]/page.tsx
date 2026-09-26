@@ -114,13 +114,17 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h2 className="font-heading text-lg font-semibold text-foreground">
-                Bids{" "}
-                <span className="text-muted-foreground">({projectBids.length})</span>
+                {isOwner ? "Bids" : "Your bid"}{" "}
+                {isOwner && <span className="text-muted-foreground">({projectBids.length})</span>}
               </h2>
             </div>
             {projectBids.length === 0 ? (
               <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                No bids yet. {isOpen && role === "contractor" ? "Be the first to bid!" : ""}
+                {isOwner
+                  ? "No bids yet."
+                  : role === "contractor" && isOpen
+                    ? "You haven't bid on this project yet."
+                    : "Bids are private between each contractor and the client."}
               </p>
             ) : isOwner ? (
               <div className="flex flex-col gap-4">
@@ -142,7 +146,7 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                   <BidCard bid={myBid} contractor={getContractor(myBid.contractorId)} />
                 ) : (
                   <p className="text-sm text-muted-foreground">
-                    {projectBids.length} contractor{projectBids.length === 1 ? "" : "s"} bidding on this project.
+                    Bids are private between each contractor and the client.
                   </p>
                 )}
               </div>
@@ -161,13 +165,15 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div className="flex flex-col gap-3 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-2 text-muted-foreground">
-                    <MessageSquare width={15} height={15} aria-hidden="true" />
-                    Bids received
-                  </span>
-                  <span className="font-medium text-foreground">{projectBids.length}</span>
-                </div>
+                {isOwner && (
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <MessageSquare width={15} height={15} aria-hidden="true" />
+                      Bids received
+                    </span>
+                    <span className="font-medium text-foreground">{projectBids.length}</span>
+                  </div>
+                )}
                 {project.startDate && (
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-2 text-muted-foreground">
