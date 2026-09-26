@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils"
 type SortKey = "recent" | "budget-high" | "budget-low"
 
 export default function BrowseProjectsPage() {
-  const { projects, getBidsForProject } = useMarketplace()
+  const { projects, projectsLoading, getBidsForProject } = useMarketplace()
   const [query, setQuery] = useState("")
   const [category, setCategory] = useState<string>("all")
   const [statusFilter, setStatusFilter] = useState<string>("open")
@@ -126,7 +126,9 @@ export default function BrowseProjectsPage() {
         </p>
       </div>
 
-      {filtered.length === 0 ? (
+      {projectsLoading ? (
+        <p className="mt-8 text-center text-sm text-muted-foreground">Loading projects…</p>
+      ) : filtered.length === 0 ? (
         <Empty className="mt-8">
           <EmptyHeader>
             <EmptyMedia variant="icon">

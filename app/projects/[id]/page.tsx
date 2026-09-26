@@ -22,6 +22,8 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
   const {
     role,
     getProject,
+    projectsLoading,
+    currentClientId,
     getBidsForProject,
     getContractor,
     currentContractorId,
@@ -34,7 +36,19 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
 
   const project = getProject(id)
 
-  if (!project) return notFound()
+  if (!project) {
+    if (projectsLoading) {
+      return (
+        <div className="mx-auto flex min-h-[50vh] max-w-5xl items-center justify-center px-4">
+          <p className="text-sm text-muted-foreground">Loading project…</p>
+        </div>
+      )
+    }
+    return notFound()
+  }
+
+  // Only the client who posted this project can accept bids, complete it, or review.
+  const isOwner = role === "client" && project.clientId === currentClientId
 
   const category = categories.find((c) => c.categoryId === project.categoryId)
   const projectBids = getBidsForProject(project.projectId)
@@ -108,7 +122,7 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
               <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
                 No bids yet. {isOpen && role === "contractor" ? "Be the first to bid!" : ""}
               </p>
-            ) : role === "client" ? (
+            ) : isOwner ? (
               <div className="flex flex-col gap-4">
                 {projectBids.map((bid) => (
                   <BidCard
@@ -190,7 +204,7 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                     Bidding closed
                   </Button>
                 )
-              ) : (
+              ) : isOwner ? (
                 <div className="flex flex-col gap-2">
                   {awardedContractor && (
                     <div className="rounded-lg bg-muted p-3 text-sm">
@@ -229,7 +243,7 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                     </Button>
                   )}
                 </div>
-              )}
+              ) : null}
             </CardContent>
           </Card>
         </aside>

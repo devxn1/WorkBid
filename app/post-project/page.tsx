@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
@@ -20,20 +20,26 @@ import {
 } from "@/components/ui/select"
 import { CategoryIcon } from "@/components/shared/category-icon"
 
+// Stock photo per category until photo uploads exist. Keys match categoryId in lib/mock-data.ts.
 const categoryImages: Record<string, string> = {
-  cat_remodeling: "/images/projects/kitchen.png",
-  cat_plumbing: "/images/projects/bathroom.png",
-  cat_electrical: "/images/projects/electrical.png",
-  cat_painting: "/images/projects/painting.png",
-  cat_carpentry: "/images/projects/deck.png",
-  cat_roofing: "/images/projects/roof.png",
-  cat_landscaping: "/images/projects/fence.png",
-  cat_flooring: "/images/projects/flooring.png",
+  remodeling: "/images/projects/kitchen.png",
+  plumbing: "/images/projects/bathroom.png",
+  electrical: "/images/projects/electrical.png",
+  painting: "/images/projects/painting.png",
+  general: "/images/projects/deck.png",
+  roofing: "/images/projects/roof.png",
+  landscaping: "/images/projects/fence.png",
+  flooring: "/images/projects/flooring.png",
 }
 
 export default function PostProjectPage() {
-  const { addProject, setRole } = useMarketplace()
+  const { addProject, authUser, authLoading } = useMarketplace()
   const router = useRouter()
+
+  // Only signed-in clients can post.
+  useEffect(() => {
+    if (!authLoading && !authUser) router.replace("/login")
+  }, [authLoading, authUser, router])
 
   const [title, setTitle] = useState("")
   const [categoryId, setCategoryId] = useState("")
@@ -42,27 +48,49 @@ export default function PostProjectPage() {
   const [budgetMin, setBudgetMin] = useState("")
   const [budgetMax, setBudgetMax] = useState("")
   const [submitted, setSubmitted] = useState(false)
+  const [posting, setPosting] = useState(false)
+  const [error, setError] = useState("")
 
   const min = Number(budgetMin)
   const max = Number(budgetMax)
   const budgetValid = min > 0 && max > 0 && max >= min
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     setSubmitted(true)
     if (!title || !categoryId || !location || description.length < 20 || !budgetValid) return
 
-    const project = addProject({
-      title,
-      description,
-      categoryId,
-      location,
-      budgetMin: min,
-      budgetMax: max,
-      images: [categoryImages[categoryId] ?? "/images/projects/painting.png"],
-    })
-    setRole("client")
-    router.push(`/projects/${project.projectId}`)
+    setError("")
+    setPosting(true)
+    try {
+      const project = await addProject({
+        title: title.trim(),
+        description: description.trim(),
+        categoryId,
+        location: location.trim(),
+        budgetMin: min,
+        budgetMax: max,
+        images: [categoryImages[categoryId] ?? "/images/projects/painting.png"],
+      })
+      router.push(`/projects/${project.projectId}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't post the project. Please try again.")
+      setPosting(false)
+    }
+  }
+
+  if (authUser?.userType === "contractor") {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center sm:px-6 lg:px-8">
+        <h1 className="font-heading text-2xl font-bold text-foreground">Only clients can post projects</h1>
+        <p className="mt-2 text-muted-foreground">
+          You&apos;re signed in as a contractor. Browse open projects to find work instead.
+        </p>
+        <Button className="mt-6" render={<Link href="/projects" />}>
+          Find work
+        </Button>
+      </div>
+    )
   }
 
   return (
@@ -174,11 +202,19 @@ export default function PostProjectPage() {
                 )}
               </Field>
 
+              {error && (
+                <p role="alert" className="text-sm text-destructive">
+                  {error}
+                </p>
+              )}
+
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" render={<Link href="/dashboard/client" />}>
                   Cancel
                 </Button>
-                <Button type="submit">Post project</Button>
+                <Button type="submit" disabled={posting || !authUser}>
+                  {posting ? "Posting…" : "Post project"}
+                </Button>
               </div>
             </FieldGroup>
           </form>

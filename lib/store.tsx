@@ -3,9 +3,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Hub } from "aws-amplify/utils"
+import { generateClient } from "aws-amplify/data"
+import type { Schema } from "@/amplify/data/resource"
 import { loadAuthUser, type AuthUser } from "./auth"
 import {
-  bids as seedBids,
   clientNotifications as seedClientNotifs,
   contractorNotifications as seedContractorNotifs,
   contractors as seedContractors,
@@ -15,7 +16,6 @@ import {
   CLIENT_USER,
   CONTRACTOR_USER,
   messages as seedMessages,
-  projects as seedProjects,
   reviews as seedReviews,
 } from "./mock-data"
 import type {
@@ -25,7 +25,6 @@ import type {
   Conversation,
   Message,
   Project,
-  ProjectStatus,
   Review,
   User,
   UserType,
@@ -60,6 +59,8 @@ interface MarketplaceContextValue {
   currentClientId: string
   currentContractorId: string
   projects: Project[]
+  /** True until projects have been loaded from the database. */
+  projectsLoading: boolean
   bids: Bid[]
   contractors: Contractor[]
   reviews: Review[]
@@ -68,7 +69,7 @@ interface MarketplaceContextValue {
   notifications: AppNotification[]
   unreadCount: number
   // actions
-  addProject: (input: NewProjectInput) => Project
+  addProject: (input: NewProjectInput) => Promise<Project>
   addBid: (projectId: string, input: NewBidInput) => void
   acceptBid: (bidId: string) => void
   rejectBid: (bidId: string) => void
@@ -88,6 +89,29 @@ interface MarketplaceContextValue {
 
 const MarketplaceContext = createContext<MarketplaceContextValue | null>(null)
 
+type ProjectRow = Schema["Project"]["type"]
+
+/** Converts a database Project row into the shape the pages use. */
+function toProject(row: ProjectRow): Project {
+  return {
+    projectId: row.id,
+    clientId: row.clientId,
+    clientName: row.clientName,
+    categoryId: row.categoryId,
+    title: row.title,
+    description: row.description,
+    location: row.location,
+    budgetMin: row.budgetMin,
+    budgetMax: row.budgetMax,
+    status: row.status ?? "open",
+    createdAt: row.createdAt,
+    startDate: row.startDate ?? undefined,
+    completionDate: row.completionDate ?? undefined,
+    images: (row.images ?? []).filter((i): i is string => !!i),
+    awardedContractorId: row.awardedContractorId ?? undefined,
+  }
+}
+
 function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`
 }
@@ -98,8 +122,11 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   // Signed-in users get their real role; the mock role only applies while signed out.
   const [mockRole, setRole] = useState<UserType>("client")
   const role = authUser?.userType ?? mockRole
-  const [projects, setProjects] = useState<Project[]>(seedProjects)
-  const [bids, setBids] = useState<Bid[]>(seedBids)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectsLoading, setProjectsLoading] = useState(true)
+  // Bids are still in-memory until they move to the database; the sample bids pointed at
+  // sample projects that no longer exist, so start empty.
+  const [bids, setBids] = useState<Bid[]>([])
   const [reviews, setReviews] = useState<Review[]>(seedReviews)
   const [conversations, setConversations] = useState<Conversation[]>(seedConversations)
   const [messages, setMessages] = useState<Message[]>(seedMessages)
@@ -135,6 +162,48 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     })
   }, [refreshAuthUser])
 
+  // Load every project from the database. Signed-out visitors read as guests
+  // ("identityPool"); signed-in users read with their login ("userPool").
+  const signedInUserId = authUser?.userId
+  const loadProjects = useCallback(async () => {
+    const client = generateClient<Schema>()
+    const authMode = signedInUserId ? "userPool" : "identityPool"
+    const rows: ProjectRow[] = []
+    let nextToken: string | null | undefined
+    try {
+      do {
+        const page = await client.models.Project.list({ authMode, limit: 100, nextToken })
+        if (page.errors?.length) throw new Error(page.errors[0].message)
+        rows.push(...page.data)
+        nextToken = page.nextToken
+      } while (nextToken)
+      rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      setProjects(rows.map(toProject))
+    } catch (err) {
+      console.error("Failed to load projects", err)
+      toast.error("Couldn't load projects", { description: "Refresh the page to try again." })
+    } finally {
+      setProjectsLoading(false)
+    }
+  }, [signedInUserId])
+
+  useEffect(() => {
+    if (!authLoading) loadProjects()
+  }, [authLoading, loadProjects])
+
+  /** Saves changes to a project the signed-in client owns and updates the local copy. */
+  const updateProjectInDb = useCallback(
+    async (projectId: string, changes: Partial<Pick<ProjectRow, "status" | "awardedContractorId" | "startDate" | "completionDate">>) => {
+      const client = generateClient<Schema>()
+      const { data, errors } = await client.models.Project.update({ id: projectId, ...changes })
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't update the project.")
+      const updated = toProject(data)
+      setProjects((prev) => prev.map((p) => (p.projectId === projectId ? updated : p)))
+      return updated
+    },
+    [],
+  )
+
   const currentUser: User = authUser
     ? {
         userId: authUser.userId,
@@ -169,25 +238,30 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     [messages],
   )
 
-  const addProject = useCallback((input: NewProjectInput) => {
-    const project: Project = {
-      projectId: uid("p"),
-      clientId: CURRENT_CLIENT_ID,
-      clientName: `${CLIENT_USER.firstName} ${CLIENT_USER.lastName}`,
-      categoryId: input.categoryId,
-      title: input.title,
-      description: input.description,
-      location: input.location,
-      budgetMin: input.budgetMin,
-      budgetMax: input.budgetMax,
-      status: "open",
-      createdAt: new Date().toISOString(),
-      images: input.images.length ? input.images : ["/images/projects/painting.png"],
-    }
-    setProjects((prev) => [project, ...prev])
-    toast.success("Project posted", { description: `“${input.title}” is now live for contractors to bid on.` })
-    return project
-  }, [])
+  const addProject = useCallback(
+    async (input: NewProjectInput) => {
+      if (!authUser) throw new Error("Sign in to post a project.")
+      const client = generateClient<Schema>()
+      const { data, errors } = await client.models.Project.create({
+        clientId: authUser.userId,
+        clientName: `${authUser.firstName} ${authUser.lastName}`.trim(),
+        categoryId: input.categoryId,
+        title: input.title,
+        description: input.description,
+        location: input.location,
+        budgetMin: input.budgetMin,
+        budgetMax: input.budgetMax,
+        status: "open",
+        images: input.images.length ? input.images : ["/images/projects/painting.png"],
+      })
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't post the project.")
+      const project = toProject(data)
+      setProjects((prev) => [project, ...prev])
+      toast.success("Project posted", { description: `“${input.title}” is now live for contractors to bid on.` })
+      return project
+    },
+    [authUser],
+  )
 
   const addBid = useCallback(
     (projectId: string, input: NewBidInput) => {
@@ -223,24 +297,20 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
           return { ...b, status: "rejected" as const }
         }),
       )
-      setProjects((prev) =>
-        prev.map((p) =>
-          p.projectId === bid.projectId
-            ? {
-                ...p,
-                status: "in_progress" as ProjectStatus,
-                awardedContractorId: bid.contractorId,
-                startDate: new Date().toISOString(),
-              }
-            : p,
-        ),
-      )
-      const contractor = getContractor(bid.contractorId)
-      toast.success("Bid accepted", {
-        description: `${contractor?.businessName ?? "The contractor"} has been hired. The project is now in progress.`,
+      updateProjectInDb(bid.projectId, {
+        status: "in_progress",
+        awardedContractorId: bid.contractorId,
+        startDate: new Date().toISOString(),
       })
+        .then(() => {
+          const contractor = getContractor(bid.contractorId)
+          toast.success("Bid accepted", {
+            description: `${contractor?.businessName ?? "The contractor"} has been hired. The project is now in progress.`,
+          })
+        })
+        .catch((err) => toast.error("Couldn't accept the bid", { description: err.message }))
     },
-    [bids, getContractor],
+    [bids, getContractor, updateProjectInDb],
   )
 
   const rejectBid = useCallback((bidId: string) => {
@@ -248,16 +318,16 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     toast("Bid declined")
   }, [])
 
-  const completeProject = useCallback((projectId: string) => {
-    setProjects((prev) =>
-      prev.map((p) =>
-        p.projectId === projectId
-          ? { ...p, status: "completed" as ProjectStatus, completionDate: new Date().toISOString() }
-          : p,
-      ),
-    )
-    toast.success("Project marked complete", { description: "You can now leave a review for the contractor." })
-  }, [])
+  const completeProject = useCallback(
+    (projectId: string) => {
+      updateProjectInDb(projectId, { status: "completed", completionDate: new Date().toISOString() })
+        .then(() =>
+          toast.success("Project marked complete", { description: "You can now leave a review for the contractor." }),
+        )
+        .catch((err) => toast.error("Couldn't complete the project", { description: err.message }))
+    },
+    [updateProjectInDb],
+  )
 
   const addReview = useCallback(
     (projectId: string, rating: number, reviewText: string) => {
@@ -336,9 +406,10 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       role,
       setRole,
       currentUser,
-      currentClientId: CURRENT_CLIENT_ID,
+      currentClientId: authUser?.userId ?? CURRENT_CLIENT_ID,
       currentContractorId: CURRENT_CONTRACTOR_ID,
       projects,
+      projectsLoading,
       bids,
       contractors: seedContractors,
       reviews,
@@ -369,6 +440,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       role,
       currentUser,
       projects,
+      projectsLoading,
       bids,
       reviews,
       conversations,

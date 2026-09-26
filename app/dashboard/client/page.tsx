@@ -14,7 +14,7 @@ import { formatBudget, relativeTime } from "@/lib/format"
 import type { Project } from "@/lib/types"
 
 export default function ClientDashboardPage() {
-  const { projects, currentClientId, getBidsForProject, currentUser } = useMarketplace()
+  const { projects, projectsLoading, currentClientId, getBidsForProject, currentUser } = useMarketplace()
 
   const myProjects = useMemo(
     () => projects.filter((p) => p.clientId === currentClientId),
@@ -44,6 +44,9 @@ export default function ClientDashboardPage() {
         <StatCard icon={TrendingUp} label="Completed" value={completed.length} />
       </div>
 
+      {projectsLoading ? (
+        <p className="mt-8 text-sm text-muted-foreground">Loading your projects…</p>
+      ) : (
       <Tabs defaultValue="active" className="mt-8">
         <TabsList>
           <TabsTrigger value="active">Active ({active.length})</TabsTrigger>
@@ -66,6 +69,7 @@ export default function ClientDashboardPage() {
           />
         </TabsContent>
       </Tabs>
+      )}
     </div>
   )
 }
