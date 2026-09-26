@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { LayoutDashboard, LogOut, MessageSquare, User as UserIcon } from "lucide-react"
+import { signOut } from "aws-amplify/auth"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -60,7 +61,12 @@ export function UserMenu() {
           )}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled>
+        <DropdownMenuItem
+          onClick={async () => {
+            await signOut()
+            router.push("/login")
+          }}
+        >
           <LogOut width={16} height={16} data-icon="inline-start" />
           Sign out
         </DropdownMenuItem>

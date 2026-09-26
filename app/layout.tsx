@@ -5,6 +5,7 @@ import { Suspense } from 'react'
 import './globals.css'
 import { MarketplaceProvider } from '@/lib/store'
 import { SiteChrome } from '@/components/layout/site-chrome'
+import { ConfigureAmplify } from '@/components/configure-amplify'
 import { Toaster } from '@/components/ui/sonner'
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
@@ -33,6 +34,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jakarta.variable} bg-background`}>
       <body className="font-sans antialiased">
+        <ConfigureAmplify />
         <Suspense fallback={null}>
           <MarketplaceProvider>
             <SiteChrome>{children}</SiteChrome>
