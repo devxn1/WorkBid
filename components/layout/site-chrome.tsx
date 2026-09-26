@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation"
 import { HardHat } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useMarketplace } from "@/lib/store"
-import { RoleSwitcher } from "./role-switcher"
+import { Button } from "@/components/ui/button"
 import { NotificationsMenu } from "./notifications-menu"
 import { UserMenu } from "./user-menu"
 
@@ -23,7 +23,7 @@ const contractorNav = [
 ]
 
 export function SiteChrome({ children }: { children: React.ReactNode }) {
-  const { role } = useMarketplace()
+  const { role, authUser, authLoading } = useMarketplace()
   const pathname = usePathname()
   const nav = role === "client" ? clientNav : contractorNav
 
@@ -57,9 +57,21 @@ export function SiteChrome({ children }: { children: React.ReactNode }) {
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
-            <RoleSwitcher />
-            <NotificationsMenu />
-            <UserMenu />
+            {authUser ? (
+              <>
+                <NotificationsMenu />
+                <UserMenu />
+              </>
+            ) : authLoading ? null : (
+              <>
+                <Button variant="ghost" size="sm" render={<Link href="/login" />}>
+                  Sign in
+                </Button>
+                <Button size="sm" render={<Link href="/signup" />}>
+                  Get started
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </header>

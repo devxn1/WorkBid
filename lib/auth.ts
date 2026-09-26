@@ -3,29 +3,61 @@ import { generateClient } from "aws-amplify/data"
 import type { Schema } from "@/amplify/data/resource"
 import type { UserType } from "./types"
 
+/** The signed-in person, combined from Cognito (email) and their UserProfile row. */
+export interface AuthUser {
+  userId: string
+  email: string
+  firstName: string
+  lastName: string
+  userType: UserType
+  avatar: string | null
+}
+
+type UserProfileRow = Schema["UserProfile"]["type"]
+
 /**
- * Makes sure the signed-in user has a UserProfile row and returns their role.
- * The first time someone signs in, the profile is created from what they entered
- * at sign-up (name + the "custom:userType" role saved in Cognito).
+ * Returns the signed-in user's UserProfile row, creating it the first time they sign in
+ * from what they entered at sign-up (name + the "custom:userType" role saved in Cognito).
  */
-export async function ensureUserProfile(): Promise<UserType> {
+async function getOrCreateUserProfile(userId: string): Promise<UserProfileRow> {
   const client = generateClient<Schema>()
-  const { userId } = await getCurrentUser()
 
   const { data: existing } = await client.models.UserProfile.get({ userId })
-  if (existing) return existing.userType as UserType
+  if (existing) return existing
 
   const attributes = await fetchUserAttributes()
-  const userType: UserType = attributes["custom:userType"] === "contractor" ? "contractor" : "client"
-
   const { data, errors } = await client.models.UserProfile.create({
     userId,
     firstName: attributes.given_name ?? "",
     lastName: attributes.family_name ?? "",
-    userType,
+    userType: attributes["custom:userType"] === "contractor" ? "contractor" : "client",
   })
-  if (errors?.length) throw new Error(errors[0].message)
-  return (data?.userType as UserType) ?? userType
+  if (data) return data
+
+  // Another tab (or request) may have created it at the same moment — read it back.
+  const { data: retry } = await client.models.UserProfile.get({ userId })
+  if (retry) return retry
+  throw new Error(errors?.[0]?.message ?? "Couldn't create your profile.")
+}
+
+/** Loads the signed-in user, or returns null when nobody is signed in. */
+export async function loadAuthUser(): Promise<AuthUser | null> {
+  let userId: string
+  try {
+    ;({ userId } = await getCurrentUser())
+  } catch {
+    return null // not signed in
+  }
+
+  const [profile, attributes] = await Promise.all([getOrCreateUserProfile(userId), fetchUserAttributes()])
+  return {
+    userId,
+    email: attributes.email ?? "",
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    userType: profile.userType === "contractor" ? "contractor" : "client",
+    avatar: profile.avatar ?? null,
+  }
 }
 
 /** Turns Cognito's error codes into messages a user can act on. */

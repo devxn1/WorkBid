@@ -7,7 +7,7 @@ import { Eye, EyeOff } from "lucide-react"
 import { toast } from "sonner"
 import { confirmSignUp, resendSignUpCode, signIn, signUp } from "aws-amplify/auth"
 import { useMarketplace } from "@/lib/store"
-import { authErrorMessage, ensureUserProfile } from "@/lib/auth"
+import { authErrorMessage } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Field, FieldGroup, FieldLabel, FieldError, FieldDescription } from "@/components/ui/field"
@@ -28,7 +28,7 @@ type Errors = Partial<Record<"firstName" | "lastName" | "email" | "password" | "
 
 export function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter()
-  const { setRole } = useMarketplace()
+  const { refreshAuthUser } = useMarketplace()
   const isSignup = mode === "signup"
 
   // "form" = email/password screen, "confirm" = enter the code Cognito emailed
@@ -63,9 +63,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 
   // Signed in: create the profile on first login, then send them to their dashboard.
   async function goToDashboard() {
-    const userType = await ensureUserProfile()
-    setRole(userType)
-    router.push(userType === "contractor" ? "/dashboard/contractor" : "/dashboard/client")
+    const user = await refreshAuthUser()
+    if (!user) throw new Error("Signed in, but couldn't load your profile. Please try again.")
+    router.push(user.userType === "contractor" ? "/dashboard/contractor" : "/dashboard/client")
   }
 
   async function handleSubmit(e: React.SubmitEvent<HTMLFormElement>) {
@@ -107,7 +107,7 @@ export function AuthForm({ mode }: AuthFormProps) {
       await goToDashboard()
     } catch (err) {
       if (err instanceof Error && err.name === "UserAlreadyAuthenticatedException") {
-        await goToDashboard()
+        await goToDashboard().catch((e) => setFormError(authErrorMessage(e)))
         return
       }
       setFormError(authErrorMessage(err))

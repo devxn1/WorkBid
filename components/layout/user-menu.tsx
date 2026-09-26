@@ -20,7 +20,7 @@ import { useMarketplace } from "@/lib/store"
 export function UserMenu() {
   const { currentUser, role } = useMarketplace()
   const router = useRouter()
-  const initials = `${currentUser.firstName[0]}${currentUser.lastName[0]}`
+  const initials = `${currentUser.firstName[0] ?? ""}${currentUser.lastName[0] ?? ""}`.toUpperCase()
 
   return (
     <DropdownMenu>
@@ -28,23 +28,30 @@ export function UserMenu() {
         render={
           <Button variant="ghost" size="icon" className="rounded-full" aria-label="Account menu">
             <Avatar className="size-9">
-              <AvatarImage src={currentUser.avatar || "/placeholder.svg"} alt="" />
+              {currentUser.avatar ? <AvatarImage src={currentUser.avatar} alt="" /> : null}
               <AvatarFallback>{initials}</AvatarFallback>
             </Avatar>
           </Button>
         }
       />
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>
-          <div className="flex flex-col">
-            <span className="font-medium">
-              {currentUser.firstName} {currentUser.lastName}
-            </span>
-            <span className="text-xs font-normal text-muted-foreground capitalize">{role} account</span>
-          </div>
-        </DropdownMenuLabel>
+        {/* Base UI requires a menu label to sit inside a group. */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>
+            <div className="flex flex-col">
+              <span className="font-medium">
+                {currentUser.firstName} {currentUser.lastName}
+              </span>
+              <span className="text-xs font-normal text-muted-foreground capitalize">{role} account</span>
+            </div>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
+          <DropdownMenuItem onClick={() => router.push("/profile")}>
+            <UserIcon width={16} height={16} data-icon="inline-start" />
+            Profile
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => router.push("/dashboard")}>
             <LayoutDashboard width={16} height={16} data-icon="inline-start" />
             Dashboard

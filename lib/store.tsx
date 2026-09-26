@@ -1,7 +1,9 @@
 "use client"
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
+import { Hub } from "aws-amplify/utils"
+import { loadAuthUser, type AuthUser } from "./auth"
 import {
   bids as seedBids,
   clientNotifications as seedClientNotifs,
@@ -46,6 +48,12 @@ interface NewBidInput {
 }
 
 interface MarketplaceContextValue {
+  /** The real signed-in user (null when signed out). */
+  authUser: AuthUser | null
+  /** True until we've checked whether someone is signed in. */
+  authLoading: boolean
+  /** Re-reads the signed-in user (after sign-in or a profile edit). */
+  refreshAuthUser: () => Promise<AuthUser | null>
   role: UserType
   setRole: (role: UserType) => void
   currentUser: User
@@ -85,7 +93,11 @@ function uid(prefix: string) {
 }
 
 export function MarketplaceProvider({ children }: { children: React.ReactNode }) {
-  const [role, setRole] = useState<UserType>("client")
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  // Signed-in users get their real role; the mock role only applies while signed out.
+  const [mockRole, setRole] = useState<UserType>("client")
+  const role = authUser?.userType ?? mockRole
   const [projects, setProjects] = useState<Project[]>(seedProjects)
   const [bids, setBids] = useState<Bid[]>(seedBids)
   const [reviews, setReviews] = useState<Review[]>(seedReviews)
@@ -94,7 +106,47 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   const [clientNotifs, setClientNotifs] = useState<AppNotification[]>(seedClientNotifs)
   const [contractorNotifs, setContractorNotifs] = useState<AppNotification[]>(seedContractorNotifs)
 
-  const currentUser = role === "client" ? CLIENT_USER : CONTRACTOR_USER
+  // Share one in-flight request so simultaneous callers don't create the profile twice.
+  const authRequest = useRef<Promise<AuthUser | null> | null>(null)
+  const refreshAuthUser = useCallback(() => {
+    if (!authRequest.current) {
+      authRequest.current = loadAuthUser()
+        .catch((err) => {
+          console.error("Failed to load signed-in user", err)
+          return null
+        })
+        .then((user) => {
+          setAuthUser(user)
+          setAuthLoading(false)
+          return user
+        })
+        .finally(() => {
+          authRequest.current = null
+        })
+    }
+    return authRequest.current
+  }, [])
+
+  useEffect(() => {
+    refreshAuthUser()
+    // Clear the user when they sign out (in this tab or another).
+    return Hub.listen("auth", ({ payload }) => {
+      if (payload.event === "signedOut") setAuthUser(null)
+    })
+  }, [refreshAuthUser])
+
+  const currentUser: User = authUser
+    ? {
+        userId: authUser.userId,
+        firstName: authUser.firstName,
+        lastName: authUser.lastName,
+        email: authUser.email,
+        userType: authUser.userType,
+        avatar: authUser.avatar ?? "",
+      }
+    : role === "client"
+      ? CLIENT_USER
+      : CONTRACTOR_USER
   const notifications = role === "client" ? clientNotifs : contractorNotifs
   const unreadCount = notifications.filter((n) => !n.read).length
 
@@ -278,6 +330,9 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
 
   const value = useMemo<MarketplaceContextValue>(
     () => ({
+      authUser,
+      authLoading,
+      refreshAuthUser,
       role,
       setRole,
       currentUser,
@@ -308,6 +363,9 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       getMessagesForConversation,
     }),
     [
+      authUser,
+      authLoading,
+      refreshAuthUser,
       role,
       currentUser,
       projects,
