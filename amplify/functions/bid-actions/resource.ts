@@ -1,7 +1,7 @@
 import { defineFunction } from "@aws-amplify/backend"
 
 /**
- * Backend function (AWS Lambda) behind the placeBid, respondToBid and
+ * Backend function (AWS Lambda) behind the placeBid, reviseBid, respondToBid and
  * startConversation mutations. These go through here instead of being written by
  * the browser, so the rules (who may bid, who may accept, who may message whom)
  * are enforced on the server.

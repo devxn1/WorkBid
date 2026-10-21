@@ -47,6 +47,8 @@ interface NewBidInput {
   proposalMessage: string
 }
 
+type BidChangesInput = Omit<NewBidInput, "proposalMessage">
+
 interface MarketplaceContextValue {
   /** The real signed-in user (null when signed out). */
   authUser: AuthUser | null
@@ -73,6 +75,8 @@ interface MarketplaceContextValue {
   addProject: (input: NewProjectInput) => Promise<Project>
   updateProjectDetails: (projectId: string, input: ProjectDetailsInput) => Promise<Project>
   addBid: (projectId: string, input: NewBidInput) => Promise<void>
+  /** Changes the amount/timeline of your own pending bid. Throws with a readable message on failure. */
+  updateBid: (bidId: string, input: BidChangesInput) => Promise<void>
   acceptBid: (bidId: string) => Promise<void>
   rejectBid: (bidId: string) => Promise<void>
   completeProject: (projectId: string) => void
@@ -168,6 +172,7 @@ function toBid(row: BidRow): Bid {
     proposalMessage: row.proposalMessage,
     bidDate: row.createdAt,
     status: row.status ?? "pending",
+    amountUpdatedAt: row.amountUpdatedAt ?? undefined,
   }
 }
 
@@ -310,6 +315,20 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (!authLoading) loadBids()
   }, [authLoading, loadBids])
+
+  // Live bid changes (a new amount, or accepted/declined) for bids you can see.
+  useEffect(() => {
+    if (!signedInUserId) return
+    const client = generateClient<Schema>()
+    const subscription = client.models.Bid.onUpdate().subscribe({
+      next: (row) => {
+        const updated = toBid(row)
+        setBids((prev) => prev.map((b) => (b.bidId === updated.bidId ? updated : b)))
+      },
+      error: (err) => console.error("Live bid updates stopped", err),
+    })
+    return () => subscription.unsubscribe()
+  }, [signedInUserId])
 
   // Load names/business info for every contractor we need to show (bidders, awarded
   // contractors, and yourself if you're a contractor).
@@ -568,15 +587,27 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     toast.success("Bid submitted", { description: "The client can now review your proposal." })
   }, [])
 
+  const updateBid = useCallback(async (bidId: string, input: BidChangesInput) => {
+    const client = generateClient<Schema>()
+    const { data, errors } = await client.mutations.reviseBid({ bidId, ...input })
+    if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't update your bid.")
+    const updated = toBid(data)
+    setBids((prev) => prev.map((b) => (b.bidId === bidId ? updated : b)))
+    toast.success("Bid updated", { description: "The client will see your new amount." })
+  }, [])
+
   /** Accepts or declines a bid through the respondToBid backend function, then reloads. */
   const respondToBid = useCallback(
     async (bidId: string, accept: boolean) => {
       const client = generateClient<Schema>()
-      const { data, errors } = await client.mutations.respondToBid({ bidId, accept })
+      // Send the amount on screen so the server refuses if the contractor changed it meanwhile.
+      const expectedAmount = accept ? bids.find((b) => b.bidId === bidId)?.amount : undefined
+      const { data, errors } = await client.mutations.respondToBid({ bidId, accept, expectedAmount })
       if (errors?.length || !data) {
         toast.error(accept ? "Couldn't accept the bid" : "Couldn't decline the bid", {
           description: errors?.[0]?.message ?? "Please try again.",
         })
+        loadBids() // show the latest amounts
         return
       }
       // Accepting also changes the project and the other bids, so reload both.
@@ -590,7 +621,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
         toast("Bid declined")
       }
     },
-    [loadBids, loadProjects, getContractor],
+    [bids, loadBids, loadProjects, getContractor],
   )
   const acceptBid = useCallback((bidId: string) => respondToBid(bidId, true), [respondToBid])
   const rejectBid = useCallback((bidId: string) => respondToBid(bidId, false), [respondToBid])
@@ -685,6 +716,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       addProject,
       updateProjectDetails,
       addBid,
+      updateBid,
       acceptBid,
       rejectBid,
       completeProject,
@@ -716,6 +748,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       addProject,
       updateProjectDetails,
       addBid,
+      updateBid,
       acceptBid,
       rejectBid,
       completeProject,

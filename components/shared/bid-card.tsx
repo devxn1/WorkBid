@@ -67,7 +67,14 @@ export function BidCard({ bid, contractor, showActions, onAccept, onReject, onMe
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           <div>
             <p className="text-xs text-muted-foreground">Bid amount</p>
-            <p className="font-heading text-lg font-bold text-foreground">{formatCurrency(bid.amount)}</p>
+            <p className="flex items-center gap-2 font-heading text-lg font-bold text-foreground">
+              {formatCurrency(bid.amount)}
+              {bid.amountUpdatedAt && (
+                <Badge variant="outline" className="font-sans text-[11px] font-medium">
+                  Updated {relativeTime(bid.amountUpdatedAt)}
+                </Badge>
+              )}
+            </p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Timeline</p>

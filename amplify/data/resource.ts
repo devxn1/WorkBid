@@ -92,10 +92,12 @@ const schema = a
       estimatedDays: a.integer().required(),
       proposalMessage: a.string().required(),
       status: a.ref("BidStatus").required(),
+      // Set when the contractor changes the amount or timeline (e.g. after negotiating).
+      amountUpdatedAt: a.datetime(),
     })
     .secondaryIndexes((index) => [index("projectId"), index("contractorId")])
     // Read-only from the browser: bids are created/accepted/declined only through the
-    // placeBid and respondToBid mutations below, which check the rules on the server.
+    // placeBid, reviseBid and respondToBid mutations below, which check the rules on the server.
     .authorization((allow) => [
       allow.ownerDefinedIn("contractorId").identityClaim("sub").to(["read"]),
       allow.ownerDefinedIn("clientId").identityClaim("sub").to(["read"]),
@@ -114,12 +116,27 @@ const schema = a
     .authorization((allow) => [allow.authenticated()])
     .handler(a.handler.function(bidActions)),
 
+  // Contractor changes the amount/timeline of their own pending bid, e.g. to the price
+  // agreed with the client in chat. (Not "updateBid": the Bid model already has one.)
+  reviseBid: a
+    .mutation()
+    .arguments({
+      bidId: a.id().required(),
+      amount: a.float().required(),
+      estimatedDays: a.integer().required(),
+    })
+    .returns(a.ref("Bid"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(bidActions)),
+
   // Project owner accepts (awards the project, declines the rest) or declines a bid.
+  // expectedAmount is the amount the client saw; accepting fails if it has since changed.
   respondToBid: a
     .mutation()
     .arguments({
       bidId: a.id().required(),
       accept: a.boolean().required(),
+      expectedAmount: a.float(),
     })
     .returns(a.ref("Bid"))
     .authorization((allow) => [allow.authenticated()])

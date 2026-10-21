@@ -235,6 +235,18 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                       <p className="font-medium text-foreground">You&apos;ve bid on this project</p>
                       <p className="text-muted-foreground">Bid status: {myBid.status}</p>
                     </div>
+                    {myBid.status === "pending" && isOpen && (
+                      <PlaceBidDialog
+                        project={project}
+                        bid={myBid}
+                        trigger={
+                          <Button className="w-full">
+                            <Pencil data-icon="inline-start" />
+                            Update bid
+                          </Button>
+                        }
+                      />
+                    )}
                     <Button
                       variant="outline"
                       className="w-full"

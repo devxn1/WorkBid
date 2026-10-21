@@ -46,6 +46,8 @@ export interface Bid {
   proposalMessage: string
   bidDate: string
   status: BidStatus
+  /** When the contractor last changed the amount or timeline, if ever. */
+  amountUpdatedAt?: string
 }
 
 export interface Contractor {
