@@ -6,9 +6,8 @@ import { Hub } from "aws-amplify/utils"
 import { generateClient } from "aws-amplify/data"
 import type { Schema } from "@/amplify/data/resource"
 import { loadAuthUser, type AuthUser } from "./auth"
+import { orThrow, type ProposalInput } from "./proposals"
 import {
-  clientNotifications as seedClientNotifs,
-  contractorNotifications as seedContractorNotifs,
   contractors as seedContractors,
   CURRENT_CLIENT_ID,
   CURRENT_CONTRACTOR_ID,
@@ -35,19 +34,12 @@ interface NewProjectInput {
   location: string
   budgetMin: number
   budgetMax: number
+  timeline: string | null
   images: string[]
 }
 
 /** Project fields the owner can change while the project is open. */
 type ProjectDetailsInput = Omit<NewProjectInput, "images"> & { images?: string[] }
-
-interface NewBidInput {
-  amount: number
-  estimatedDays: number
-  proposalMessage: string
-}
-
-type BidChangesInput = Omit<NewBidInput, "proposalMessage">
 
 interface MarketplaceContextValue {
   /** The real signed-in user (null when signed out). */
@@ -65,6 +57,8 @@ interface MarketplaceContextValue {
   /** True until projects have been loaded from the database. */
   projectsLoading: boolean
   bids: Bid[]
+  /** True until your bids have been loaded (after sign-in). */
+  bidsLoading: boolean
   contractors: Contractor[]
   reviews: Review[]
   conversations: Conversation[]
@@ -74,12 +68,20 @@ interface MarketplaceContextValue {
   // actions
   addProject: (input: NewProjectInput) => Promise<Project>
   updateProjectDetails: (projectId: string, input: ProjectDetailsInput) => Promise<Project>
-  addBid: (projectId: string, input: NewBidInput) => Promise<void>
-  /** Changes the amount/timeline of your own pending bid. Throws with a readable message on failure. */
-  updateBid: (bidId: string, input: BidChangesInput) => Promise<void>
-  acceptBid: (bidId: string) => Promise<void>
-  rejectBid: (bidId: string) => Promise<void>
-  completeProject: (projectId: string) => void
+  // Bid actions all go through the bid-actions function and throw a readable message on failure.
+  /** Contractor: submits a new bid (proposal version 1). Returns the bid id. */
+  addBid: (projectId: string, input: ProposalInput) => Promise<string>
+  /** Contractor: submits a new version of their bid, based on version `expectedVersion`. */
+  reviseBid: (bidId: string, expectedVersion: number, input: ProposalInput, changeSummary: string) => Promise<void>
+  /** Contractor: withdraws their own open bid. */
+  withdrawBid: (bidId: string) => Promise<void>
+  /** Client: asks the contractor to revise their bid. */
+  requestRevision: (bidId: string, note: string) => Promise<void>
+  /** Client: declines a bid. */
+  declineBid: (bidId: string) => Promise<void>
+  /** Client: confirms the bid's current version (`bidVersionId`) and hires the contractor. */
+  confirmAgreement: (bidId: string, bidVersionId: string) => Promise<void>
+  completeProject: (projectId: string) => Promise<void>
   addReview: (projectId: string, rating: number, reviewText: string) => void
   /** Sends a message. Throws with a readable message on failure. */
   sendMessage: (conversationId: string, body: string) => Promise<void>
@@ -101,6 +103,18 @@ type ProjectRow = Schema["Project"]["type"]
 type BidRow = Schema["Bid"]["type"]
 type ConversationRow = Schema["Conversation"]["type"]
 type MessageRow = Schema["Message"]["type"]
+type NotificationRow = Schema["Notification"]["type"]
+
+function toNotification(row: NotificationRow): AppNotification {
+  return {
+    notificationId: row.id,
+    title: row.title,
+    body: row.body,
+    href: row.href ?? undefined,
+    read: row.read,
+    createdAt: row.createdAt,
+  }
+}
 
 /** A conversation as stored; the project's status is added from the loaded projects. */
 type ConversationInfo = Omit<Conversation, "projectStatus"> & { createdAt: string }
@@ -173,6 +187,10 @@ function toBid(row: BidRow): Bid {
     bidDate: row.createdAt,
     status: row.status ?? "pending",
     amountUpdatedAt: row.amountUpdatedAt ?? undefined,
+    currentVersionId: row.currentVersionId ?? undefined,
+    currentVersion: row.currentVersion ?? 1,
+    previousAmount: row.previousAmount ?? undefined,
+    revisionNote: row.revisionNote ?? undefined,
   }
 }
 
@@ -191,6 +209,7 @@ function toProject(row: ProjectRow): Project {
     location: row.location,
     budgetMin: row.budgetMin,
     budgetMax: row.budgetMax,
+    timeline: row.timeline ?? undefined,
     status: row.status ?? "open",
     createdAt: row.createdAt,
     startDate: row.startDate ?? undefined,
@@ -212,17 +231,15 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   const role = authUser?.userType ?? mockRole
   const [projects, setProjects] = useState<Project[]>([])
   const [projectsLoading, setProjectsLoading] = useState(true)
-  // Bids are still in-memory until they move to the database; the sample bids pointed at
-  // sample projects that no longer exist, so start empty.
   const [bids, setBids] = useState<Bid[]>([])
+  const [bidsLoading, setBidsLoading] = useState(true)
   // Real contractors (by Cognito user id), loaded from ContractorProfile/UserProfile as needed.
   const [contractorInfo, setContractorInfo] = useState<Record<string, ContractorInfo>>({})
   const requestedContractors = useRef(new Set<string>())
   const [reviews, setReviews] = useState<Review[]>(seedReviews)
   const [conversationRows, setConversationRows] = useState<ConversationInfo[]>([])
   const [messages, setMessages] = useState<Message[]>([])
-  const [clientNotifs, setClientNotifs] = useState<AppNotification[]>(seedClientNotifs)
-  const [contractorNotifs, setContractorNotifs] = useState<AppNotification[]>(seedContractorNotifs)
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
 
   // Share one in-flight request so simultaneous callers don't create the profile twice.
   const authRequest = useRef<Promise<AuthUser | null> | null>(null)
@@ -247,10 +264,20 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     refreshAuthUser()
-    // Clear the user when they sign out (in this tab or another).
-    return Hub.listen("auth", ({ payload }) => {
+    // Clear the user when they sign out in this tab.
+    const stopListening = Hub.listen("auth", ({ payload }) => {
       if (payload.event === "signedOut") setAuthUser(null)
     })
+    // Logins are shared by every tab in the browser. When another tab signs out or signs in
+    // as someone else, reload the user so this tab doesn't act as an account it no longer has.
+    function handleStorage(event: StorageEvent) {
+      if (event.key === null || event.key.startsWith("CognitoIdentityServiceProvider.")) refreshAuthUser()
+    }
+    window.addEventListener("storage", handleStorage)
+    return () => {
+      stopListening()
+      window.removeEventListener("storage", handleStorage)
+    }
   }, [refreshAuthUser])
 
   // Switches the color theme (contractors are orange, see app/globals.css). It's set on
@@ -293,6 +320,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   const loadBids = useCallback(async () => {
     if (!signedInUserId) {
       setBids([])
+      setBidsLoading(false)
       return
     }
     const client = generateClient<Schema>()
@@ -309,6 +337,8 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       setBids(rows.map(toBid))
     } catch (err) {
       console.error("Failed to load bids", err)
+    } finally {
+      setBidsLoading(false)
     }
   }, [signedInUserId])
 
@@ -316,16 +346,51 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     if (!authLoading) loadBids()
   }, [authLoading, loadBids])
 
-  // Live bid changes (a new amount, or accepted/declined) for bids you can see.
+  /** Adds or replaces a bid in the local list. */
+  const upsertBid = useCallback((bid: Bid) => {
+    setBids((prev) =>
+      prev.some((b) => b.bidId === bid.bidId) ? prev.map((b) => (b.bidId === bid.bidId ? bid : b)) : [bid, ...prev],
+    )
+  }, [])
+
+  // Live bid changes for bids you can see: new bids, revisions, and status changes.
   useEffect(() => {
     if (!signedInUserId) return
     const client = generateClient<Schema>()
-    const subscription = client.models.Bid.onUpdate().subscribe({
+    const subscriptions = [
+      client.models.Bid.onCreate().subscribe({
+        next: (row) => upsertBid(toBid(row)),
+        error: (err) => console.error("Live new-bid updates stopped", err),
+      }),
+      client.models.Bid.onUpdate().subscribe({
+        next: (row) => upsertBid(toBid(row)),
+        error: (err) => console.error("Live bid updates stopped", err),
+      }),
+    ]
+    return () => subscriptions.forEach((s) => s.unsubscribe())
+  }, [signedInUserId, upsertBid])
+
+  // Notifications: yours only, newest first, with new ones arriving live.
+  useEffect(() => {
+    if (!signedInUserId) {
+      setNotifications([])
+      return
+    }
+    const client = generateClient<Schema>()
+    listAll((nextToken) => client.models.Notification.listNotificationByUserId({ userId: signedInUserId }, { nextToken }))
+      .then((rows) =>
+        setNotifications(rows.map(toNotification).sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
+      )
+      .catch((err) => console.error("Failed to load notifications", err))
+    const subscription = client.models.Notification.onCreate().subscribe({
       next: (row) => {
-        const updated = toBid(row)
-        setBids((prev) => prev.map((b) => (b.bidId === updated.bidId ? updated : b)))
+        const notification = toNotification(row)
+        setNotifications((prev) =>
+          prev.some((n) => n.notificationId === notification.notificationId) ? prev : [notification, ...prev],
+        )
+        toast(notification.title, { description: notification.body })
       },
-      error: (err) => console.error("Live bid updates stopped", err),
+      error: (err) => console.error("Live notifications stopped", err),
     })
     return () => subscription.unsubscribe()
   }, [signedInUserId])
@@ -467,19 +532,6 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       )
   }, [conversationRows, messages, projects])
 
-  /** Saves changes to a project the signed-in client owns and updates the local copy. */
-  const updateProjectInDb = useCallback(
-    async (projectId: string, changes: Partial<Pick<ProjectRow, "status" | "awardedContractorId" | "startDate" | "completionDate">>) => {
-      const client = generateClient<Schema>()
-      const { data, errors } = await client.models.Project.update({ id: projectId, ...changes })
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't update the project.")
-      const updated = toProject(data)
-      setProjects((prev) => prev.map((p) => (p.projectId === projectId ? updated : p)))
-      return updated
-    },
-    [],
-  )
-
   const currentUser: User = authUser
     ? {
         userId: authUser.userId,
@@ -492,7 +544,6 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     : role === "client"
       ? CLIENT_USER
       : CONTRACTOR_USER
-  const notifications = role === "client" ? clientNotifs : contractorNotifs
   const unreadCount = notifications.filter((n) => !n.read).length
 
   const getContractor = useCallback(
@@ -540,6 +591,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
         location: input.location,
         budgetMin: input.budgetMin,
         budgetMax: input.budgetMax,
+        timeline: input.timeline,
         status: "open",
         images: input.images.length ? input.images : ["/images/projects/painting.png"],
       })
@@ -567,6 +619,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
         location: input.location,
         budgetMin: input.budgetMin,
         budgetMax: input.budgetMax,
+        timeline: input.timeline,
         ...(input.images && { images: input.images }),
       })
       if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't save your changes.")
@@ -578,64 +631,81 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     [authUser, projects],
   )
 
-  /** Places a bid through the placeBid backend function. Throws with a readable message on failure. */
-  const addBid = useCallback(async (projectId: string, input: NewBidInput) => {
-    const client = generateClient<Schema>()
-    const { data, errors } = await client.mutations.placeBid({ projectId, ...input })
-    if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't submit your bid.")
-    setBids((prev) => [toBid(data), ...prev])
-    toast.success("Bid submitted", { description: "The client can now review your proposal." })
-  }, [])
-
-  const updateBid = useCallback(async (bidId: string, input: BidChangesInput) => {
-    const client = generateClient<Schema>()
-    const { data, errors } = await client.mutations.reviseBid({ bidId, ...input })
-    if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't update your bid.")
-    const updated = toBid(data)
-    setBids((prev) => prev.map((b) => (b.bidId === bidId ? updated : b)))
-    toast.success("Bid updated", { description: "The client will see your new amount." })
-  }, [])
-
-  /** Accepts or declines a bid through the respondToBid backend function, then reloads. */
-  const respondToBid = useCallback(
-    async (bidId: string, accept: boolean) => {
+  const addBid = useCallback(
+    async (projectId: string, input: ProposalInput) => {
       const client = generateClient<Schema>()
-      // Send the amount on screen so the server refuses if the contractor changed it meanwhile.
-      const expectedAmount = accept ? bids.find((b) => b.bidId === bidId)?.amount : undefined
-      const { data, errors } = await client.mutations.respondToBid({ bidId, accept, expectedAmount })
-      if (errors?.length || !data) {
-        toast.error(accept ? "Couldn't accept the bid" : "Couldn't decline the bid", {
-          description: errors?.[0]?.message ?? "Please try again.",
-        })
-        loadBids() // show the latest amounts
-        return
-      }
-      // Accepting also changes the project and the other bids, so reload both.
-      await Promise.all([loadBids(), loadProjects()])
-      if (accept) {
-        const contractor = getContractor(data.contractorId)
-        toast.success("Bid accepted", {
-          description: `${contractor?.businessName ?? "The contractor"} has been hired. The project is now in progress.`,
-        })
-      } else {
-        toast("Bid declined")
-      }
+      const bid = orThrow(await client.mutations.placeBid({ projectId, ...input }), "Couldn't submit your bid.")
+      upsertBid(toBid(bid))
+      toast.success("Bid submitted", { description: "The client can now review your proposal." })
+      return bid.id
     },
-    [bids, loadBids, loadProjects, getContractor],
+    [upsertBid],
   )
-  const acceptBid = useCallback((bidId: string) => respondToBid(bidId, true), [respondToBid])
-  const rejectBid = useCallback((bidId: string) => respondToBid(bidId, false), [respondToBid])
 
-  const completeProject = useCallback(
-    (projectId: string) => {
-      updateProjectInDb(projectId, { status: "completed", completionDate: new Date().toISOString() })
-        .then(() =>
-          toast.success("Project marked complete", { description: "You can now leave a review for the contractor." }),
-        )
-        .catch((err) => toast.error("Couldn't complete the project", { description: err.message }))
+  const reviseBid = useCallback(
+    async (bidId: string, expectedVersion: number, input: ProposalInput, changeSummary: string) => {
+      const client = generateClient<Schema>()
+      const result = await client.mutations.reviseBid({
+        bidId,
+        expectedVersion,
+        changeSummary: changeSummary || null,
+        ...input,
+      })
+      const bid = orThrow(result, "Couldn't submit your revision.")
+      upsertBid(toBid(bid))
+      toast.success("Revised proposal sent", { description: "The client was notified and can review the changes." })
     },
-    [updateProjectInDb],
+    [upsertBid],
   )
+
+  const withdrawBid = useCallback(
+    async (bidId: string) => {
+      const client = generateClient<Schema>()
+      const bid = orThrow(await client.mutations.withdrawBid({ bidId }), "Couldn't withdraw your bid.")
+      upsertBid(toBid(bid))
+      toast("Bid withdrawn")
+    },
+    [upsertBid],
+  )
+
+  const requestRevision = useCallback(
+    async (bidId: string, note: string) => {
+      const client = generateClient<Schema>()
+      const bid = orThrow(await client.mutations.requestRevision({ bidId, note }), "Couldn't request a revision.")
+      upsertBid(toBid(bid))
+      toast.success("Revision requested", { description: "The contractor was notified, and your note is in your chat." })
+    },
+    [upsertBid],
+  )
+
+  const declineBid = useCallback(
+    async (bidId: string) => {
+      const client = generateClient<Schema>()
+      const bid = orThrow(await client.mutations.declineBid({ bidId }), "Couldn't decline the bid.")
+      upsertBid(toBid(bid))
+      toast("Bid declined")
+    },
+    [upsertBid],
+  )
+
+  const confirmAgreement = useCallback(
+    async (bidId: string, bidVersionId: string) => {
+      const client = generateClient<Schema>()
+      orThrow(await client.mutations.confirmAgreement({ bidId, bidVersionId }), "Couldn't confirm the agreement.")
+      // Hiring changes the project and every bid on it, so reload both.
+      await Promise.all([loadBids(), loadProjects()])
+      toast.success("Contractor hired", { description: "Your agreement is confirmed. The project is now in your workspace." })
+    },
+    [loadBids, loadProjects],
+  )
+
+  const completeProject = useCallback(async (projectId: string) => {
+    const client = generateClient<Schema>()
+    const project = orThrow(await client.mutations.completeProject({ projectId }), "Couldn't complete the project.")
+    const updated = toProject(project)
+    setProjects((prev) => prev.map((p) => (p.projectId === projectId ? updated : p)))
+    toast.success("Project marked complete", { description: "You can now leave a review for the contractor." })
+  }, [])
 
   const addReview = useCallback(
     (projectId: string, rating: number, reviewText: string) => {
@@ -690,9 +760,13 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   }, [])
 
   const markNotificationsRead = useCallback(() => {
-    if (role === "client") setClientNotifs((prev) => prev.map((n) => ({ ...n, read: true })))
-    else setContractorNotifs((prev) => prev.map((n) => ({ ...n, read: true })))
-  }, [role])
+    const unread = notifications.filter((n) => !n.read)
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+    const client = generateClient<Schema>()
+    Promise.all(unread.map((n) => client.models.Notification.update({ id: n.notificationId, read: true }))).catch(
+      (err) => console.error("Couldn't mark notifications read", err),
+    )
+  }, [notifications])
 
   const value = useMemo<MarketplaceContextValue>(
     () => ({
@@ -707,6 +781,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       projects,
       projectsLoading,
       bids,
+      bidsLoading,
       contractors: seedContractors,
       reviews,
       conversations,
@@ -716,9 +791,11 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       addProject,
       updateProjectDetails,
       addBid,
-      updateBid,
-      acceptBid,
-      rejectBid,
+      reviseBid,
+      withdrawBid,
+      requestRevision,
+      declineBid,
+      confirmAgreement,
       completeProject,
       addReview,
       sendMessage,
@@ -740,6 +817,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       projects,
       projectsLoading,
       bids,
+      bidsLoading,
       reviews,
       conversations,
       messages,
@@ -748,9 +826,11 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       addProject,
       updateProjectDetails,
       addBid,
-      updateBid,
-      acceptBid,
-      rejectBid,
+      reviseBid,
+      withdrawBid,
+      requestRevision,
+      declineBid,
+      confirmAgreement,
       completeProject,
       addReview,
       sendMessage,

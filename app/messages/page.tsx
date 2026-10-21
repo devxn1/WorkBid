@@ -4,14 +4,14 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
-import { ArrowLeft, MessagesSquare, SendHorizontal } from "lucide-react"
+import { ArrowLeft, FileText, MessagesSquare, PencilLine, SendHorizontal } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { StatusBadge } from "@/components/shared/status-badge"
-import { initials, relativeTime } from "@/lib/format"
+import { bidStatusLabels, initials, isOpenBid, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 const MAX_MESSAGE_LENGTH = 2000
@@ -28,6 +28,7 @@ function MessagesInner() {
     currentContractorId,
     getMessagesForConversation,
     sendMessage,
+    bids,
   } = useMarketplace()
 
   const myConversations = useMemo(
@@ -60,6 +61,12 @@ function MessagesInner() {
   const active = myConversations.find((c) => c.conversationId === activeId) ?? null
   const thread = active ? getMessagesForConversation(active.conversationId) : []
   const myId = role === "client" ? currentClientId : currentContractorId
+  // The bid this conversation is about, so either side can jump to the formal proposal.
+  // Chat itself never changes a bid.
+  const activeBid = active
+    ? bids.find((b) => b.projectId === active.projectId && b.contractorId === active.contractorId && b.status !== "withdrawn")
+    : undefined
+  const canRevise = role === "contractor" && !!activeBid && active?.projectStatus === "open" && isOpenBid(activeBid.status)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
@@ -179,6 +186,34 @@ function MessagesInner() {
                 </div>
                 <StatusBadge status={active.projectStatus} />
               </div>
+
+              {activeBid && (
+                <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/40 px-4 py-2 text-xs">
+                  <span className="text-muted-foreground">
+                    Bid: <span className="font-medium text-foreground">{bidStatusLabels[activeBid.status]}</span>
+                    {activeBid.currentVersion > 1 && ` · version ${activeBid.currentVersion}`}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="ml-auto h-7"
+                    render={<Link href={`/projects/${activeBid.projectId}/bids/${activeBid.bidId}`} />}
+                  >
+                    <FileText data-icon="inline-start" />
+                    View proposal
+                  </Button>
+                  {canRevise && (
+                    <Button
+                      size="sm"
+                      className="h-7"
+                      render={<Link href={`/projects/${activeBid.projectId}/proposal?revise=${activeBid.bidId}`} />}
+                    >
+                      <PencilLine data-icon="inline-start" />
+                      Revise bid
+                    </Button>
+                  )}
+                </div>
+              )}
 
               <div ref={scrollRef} className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
                 {thread.map((m) => {

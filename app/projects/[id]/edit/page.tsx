@@ -86,6 +86,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
               description: project.description,
               budgetMin: project.budgetMin,
               budgetMax: project.budgetMax,
+              timeline: project.timeline ?? null,
               images: uploadedPhotos,
             }}
             submitLabel="Save changes"

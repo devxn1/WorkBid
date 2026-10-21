@@ -4,7 +4,7 @@ import { use, useState } from "react"
 import Link from "next/link"
 import { notFound, useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { ArrowLeft, CalendarClock, MapPin, MessageSquare, Pencil, Wallet } from "lucide-react"
+import { ArrowLeft, CalendarClock, Clock, FileText, MapPin, MessageSquare, Pencil, Wallet } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { categories } from "@/lib/mock-data"
 import { Button } from "@/components/ui/button"
@@ -13,16 +13,17 @@ import { Separator } from "@/components/ui/separator"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { CategoryIcon } from "@/components/shared/category-icon"
 import { BidCard } from "@/components/shared/bid-card"
-import { PlaceBidDialog } from "@/components/shared/place-bid-dialog"
 import { ReviewDialog } from "@/components/shared/review-dialog"
 import { ProjectImage } from "@/components/shared/project-image"
-import { formatBudget, formatDate, relativeTime } from "@/lib/format"
+import { AgreementPanel } from "@/components/proposals/agreement-panel"
+import { bidStatusLabels, formatBudget, formatDate, isOpenBid, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 export default function ProjectDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
   const {
+    authUser,
     role,
     getProject,
     projectsLoading,
@@ -30,14 +31,13 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
     getBidsForProject,
     getContractor,
     currentContractorId,
-    acceptBid,
-    rejectBid,
     startConversation,
     completeProject,
     reviews,
   } = useMarketplace()
   const [photoIndex, setPhotoIndex] = useState(0)
   const [openingChat, setOpeningChat] = useState(false)
+  const [completing, setCompleting] = useState(false)
 
   const project = getProject(id)
 
@@ -57,10 +57,25 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
 
   const category = categories.find((c) => c.categoryId === project.categoryId)
   const projectBids = getBidsForProject(project.projectId)
-  const myBid = projectBids.find((b) => b.contractorId === currentContractorId)
+  // A withdrawn bid doesn't count: the contractor can bid again while the project is open.
+  const myBid = projectBids.find((b) => b.contractorId === currentContractorId && b.status !== "withdrawn")
   const isOpen = project.status === "open"
+  // The client and the hired contractor share the agreement workspace once someone is hired.
+  const isHiredContractor = !!authUser && project.awardedContractorId === authUser.userId
+  const showWorkspace = !isOpen && !!authUser && (isOwner || isHiredContractor)
   const hasReview = reviews.some((r) => r.projectId === project.projectId)
   const awardedContractor = project.awardedContractorId ? getContractor(project.awardedContractorId) : undefined
+
+  async function handleComplete() {
+    setCompleting(true)
+    try {
+      await completeProject(project!.projectId)
+    } catch (err) {
+      toast.error("Couldn't complete the project", { description: err instanceof Error ? err.message : undefined })
+    } finally {
+      setCompleting(false)
+    }
+  }
 
   async function handleMessage(contractorId: string) {
     setOpeningChat(true)
@@ -130,6 +145,12 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                 <MapPin width={15} height={15} aria-hidden="true" />
                 {project.location}
               </span>
+              {project.timeline && (
+                <span className="flex items-center gap-1.5">
+                  <Clock width={15} height={15} aria-hidden="true" />
+                  {project.timeline}
+                </span>
+              )}
               <span>Posted by {project.clientName}</span>
             </div>
           </div>
@@ -144,6 +165,13 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
           </div>
 
           <Separator />
+
+          {showWorkspace && (
+            <>
+              <AgreementPanel project={project} viewerId={authUser!.userId} />
+              <Separator />
+            </>
+          )}
 
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between">
@@ -168,9 +196,8 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                     bid={bid}
                     contractor={getContractor(bid.contractorId)}
                     showActions={isOpen}
-                    onAccept={() => acceptBid(bid.bidId)}
-                    onReject={() => rejectBid(bid.bidId)}
                     onMessage={() => handleMessage(bid.contractorId)}
+                    messageDisabled={openingChat}
                   />
                 ))}
               </div>
@@ -208,6 +235,15 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                     <span className="font-medium text-foreground">{projectBids.length}</span>
                   </div>
                 )}
+                {project.timeline && (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      <Clock width={15} height={15} aria-hidden="true" />
+                      Timeline
+                    </span>
+                    <span className="text-right font-medium text-foreground">{project.timeline}</span>
+                  </div>
+                )}
                 {project.startDate && (
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-2 text-muted-foreground">
@@ -232,21 +268,32 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                 myBid ? (
                   <div className="flex flex-col gap-2">
                     <div className="rounded-lg bg-primary/5 p-3 text-center text-sm">
-                      <p className="font-medium text-foreground">You&apos;ve bid on this project</p>
-                      <p className="text-muted-foreground">Bid status: {myBid.status}</p>
+                      <p className="font-medium text-foreground">
+                        {myBid.status === "accepted" ? "You're hired for this project" : "You've bid on this project"}
+                      </p>
+                      <p className="text-muted-foreground">
+                        {myBid.status === "closed"
+                          ? "This project hired another contractor."
+                          : `Bid status: ${bidStatusLabels[myBid.status]}`}
+                      </p>
                     </div>
-                    {myBid.status === "pending" && isOpen && (
-                      <PlaceBidDialog
-                        project={project}
-                        bid={myBid}
-                        trigger={
-                          <Button className="w-full">
-                            <Pencil data-icon="inline-start" />
-                            Update bid
-                          </Button>
-                        }
-                      />
+                    {isOpen && isOpenBid(myBid.status) && (
+                      <Button
+                        className="w-full"
+                        render={<Link href={`/projects/${project.projectId}/proposal?revise=${myBid.bidId}`} />}
+                      >
+                        <Pencil data-icon="inline-start" />
+                        Revise bid
+                      </Button>
                     )}
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      render={<Link href={`/projects/${project.projectId}/bids/${myBid.bidId}`} />}
+                    >
+                      <FileText data-icon="inline-start" />
+                      View your proposal
+                    </Button>
                     <Button
                       variant="outline"
                       className="w-full"
@@ -258,10 +305,9 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                     </Button>
                   </div>
                 ) : isOpen ? (
-                  <PlaceBidDialog
-                    project={project}
-                    trigger={<Button className="w-full">Place a bid</Button>}
-                  />
+                  <Button className="w-full" render={<Link href={`/projects/${project.projectId}/proposal`} />}>
+                    Submit a bid
+                  </Button>
                 ) : (
                   <Button className="w-full" disabled>
                     Bidding closed
@@ -281,7 +327,7 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                   )}
                   {awardedContractor && (
                     <div className="rounded-lg bg-muted p-3 text-sm">
-                      <p className="text-xs text-muted-foreground">Awarded to</p>
+                      <p className="text-xs text-muted-foreground">Hired</p>
                       <Link
                         href={`/contractors/${awardedContractor.contractorId}`}
                         className="font-medium text-foreground hover:underline"
@@ -290,9 +336,9 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                       </Link>
                     </div>
                   )}
-                  {project.status === "in_progress" && (
-                    <Button className="w-full" onClick={() => completeProject(project.projectId)}>
-                      Mark as complete
+                  {(project.status === "awarded" || project.status === "in_progress") && (
+                    <Button className="w-full" onClick={handleComplete} disabled={completing}>
+                      {completing ? "Saving…" : "Mark as complete"}
                     </Button>
                   )}
                   {project.status === "completed" &&

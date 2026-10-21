@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, EmptyContent } from "@/components/ui/empty"
 import { StatCard } from "@/components/shared/stat-card"
 import { StatusBadge } from "@/components/shared/status-badge"
-import { formatCurrency, relativeTime } from "@/lib/format"
+import { bidStatusLabels, formatCurrency, isOpenBid, relativeTime } from "@/lib/format"
 import type { Bid, Project } from "@/lib/types"
 
 export default function ContractorDashboardPage() {
@@ -19,7 +19,8 @@ export default function ContractorDashboardPage() {
   const contractor = getContractor(currentContractorId)
   const myBids = useMemo(() => getBidsByContractor(currentContractorId), [getBidsByContractor, currentContractorId])
 
-  const pending = myBids.filter((b) => b.status === "pending")
+  // Active = still being negotiated (submitted or revision requested).
+  const pending = myBids.filter((b) => isOpenBid(b.status))
   const won = myBids.filter((b) => b.status === "accepted")
   const winRate = myBids.length ? Math.round((won.length / myBids.length) * 100) : 0
 
@@ -44,7 +45,7 @@ export default function ContractorDashboardPage() {
       </header>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={Clock} label="Pending bids" value={pending.length} />
+        <StatCard icon={Clock} label="Active bids" value={pending.length} />
         <StatCard icon={Award} label="Jobs won" value={won.length} />
         <StatCard icon={CheckCircle2} label="Win rate" value={`${winRate}%`} />
         <StatCard icon={Star} label="Rating" value={contractor.rating.toFixed(1)} hint={`${contractor.reviewCount} reviews`} />
@@ -52,7 +53,7 @@ export default function ContractorDashboardPage() {
 
       <Tabs defaultValue="pending" className="mt-8">
         <TabsList>
-          <TabsTrigger value="pending">Pending ({pending.length})</TabsTrigger>
+          <TabsTrigger value="pending">Active ({pending.length})</TabsTrigger>
           <TabsTrigger value="won">Won ({won.length})</TabsTrigger>
           <TabsTrigger value="all">All bids ({myBids.length})</TabsTrigger>
         </TabsList>
@@ -101,16 +102,14 @@ function BidList({
         if (!project) return null
         return (
           <Card key={bid.bidId} className="transition-shadow hover:shadow-sm">
-            <Link href={`/projects/${project.projectId}`} className="block">
+            <Link href={`/projects/${project.projectId}/bids/${bid.bidId}`} className="block">
               <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 flex-col gap-1">
                   <div className="flex items-center gap-2">
-                    <Badge
-                      variant={bid.status === "accepted" ? "default" : bid.status === "rejected" ? "secondary" : "outline"}
-                      className="capitalize"
-                    >
-                      {bid.status}
+                    <Badge variant={bid.status === "accepted" ? "default" : isOpenBid(bid.status) ? "outline" : "secondary"}>
+                      {bidStatusLabels[bid.status]}
                     </Badge>
+                    {bid.currentVersion > 1 && <Badge variant="outline">v{bid.currentVersion}</Badge>}
                     <span className="text-xs text-muted-foreground">Bid {relativeTime(bid.bidDate)}</span>
                   </div>
                   <h3 className="truncate font-heading text-base font-semibold text-foreground">{project.title}</h3>

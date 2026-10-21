@@ -1,4 +1,4 @@
-import type { ProjectStatus } from "./types"
+import type { BidStatus, ProjectStatus } from "./types"
 
 export function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -48,9 +48,33 @@ export function relativeTime(iso: string) {
 
 export const statusLabels: Record<ProjectStatus, string> = {
   open: "Open for bids",
-  awarded: "Awarded",
+  awarded: "Hired",
   in_progress: "In progress",
   completed: "Completed",
+}
+
+export const bidStatusLabels: Record<BidStatus, string> = {
+  pending: "Submitted",
+  revision_requested: "Revision requested",
+  accepted: "Accepted",
+  rejected: "Declined",
+  withdrawn: "Withdrawn",
+  closed: "Closed",
+}
+
+/** Bids the client can still accept, decline or ask to revise. */
+export function isOpenBid(status: BidStatus) {
+  return status === "pending" || status === "revision_requested"
+}
+
+/** A YYYY-MM-DD date (no time zone) as e.g. "Mar 4, 2027". */
+export function formatDay(day: string) {
+  return new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
+/** e.g. "+$400" / "−$250" for a price change. */
+export function formatChange(value: number) {
+  return `${value < 0 ? "−" : "+"}${formatCurrency(Math.abs(value))}`
 }
 
 export const statusVariants: Record<ProjectStatus, "default" | "secondary" | "outline"> = {

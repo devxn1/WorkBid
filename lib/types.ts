@@ -1,8 +1,10 @@
 export type UserType = "client" | "contractor"
 
+/** "awarded" is shown as "Hired". */
 export type ProjectStatus = "open" | "awarded" | "in_progress" | "completed"
 
-export type BidStatus = "pending" | "accepted" | "rejected"
+/** "pending" is shown as "Submitted"; "closed" means another contractor was hired. */
+export type BidStatus = "pending" | "revision_requested" | "accepted" | "rejected" | "withdrawn" | "closed"
 
 export interface User {
   userId: string
@@ -29,6 +31,8 @@ export interface Project {
   location: string
   budgetMin: number
   budgetMax: number
+  /** Free text such as "Within 2 weeks". */
+  timeline?: string
   status: ProjectStatus
   createdAt: string
   startDate?: string
@@ -46,8 +50,73 @@ export interface Bid {
   proposalMessage: string
   bidDate: string
   status: BidStatus
-  /** When the contractor last changed the amount or timeline, if ever. */
+  /** When the contractor last revised the bid, if ever. */
   amountUpdatedAt?: string
+  currentVersionId?: string
+  /** The current proposal version number (1 = original). */
+  currentVersion: number
+  /** The amount before the latest revision. */
+  previousAmount?: number
+  /** The client's note when they asked for a revision. */
+  revisionNote?: string
+}
+
+/** The terms of an offer, shared by proposal versions and agreements. */
+export interface ProposalTerms {
+  amount: number
+  scope: string
+  estimatedDays: number
+  /** YYYY-MM-DD */
+  startDate?: string
+  paymentTerms?: string
+  materialsCost?: number
+  laborCost?: number
+  materialsDetail?: string
+  included: string[]
+  excluded: string[]
+  notes?: string
+}
+
+export type BidVersionStatus = "active" | "superseded" | "accepted"
+
+/** One version of a contractor's proposal. Versions are never edited. */
+export interface BidVersion extends ProposalTerms {
+  versionId: string
+  bidId: string
+  version: number
+  status: BidVersionStatus
+  changeSummary?: string
+  createdAt: string
+}
+
+/** The confirmed terms between a client and the hired contractor. Never changes. */
+export interface Agreement extends ProposalTerms {
+  agreementId: string
+  projectId: string
+  projectTitle: string
+  bidId: string
+  bidVersionId: string
+  version: number
+  clientId: string
+  clientName: string
+  contractorId: string
+  contractorName: string
+  businessName?: string
+  confirmedAt: string
+}
+
+export type ChangeOrderStatus = "proposed" | "approved" | "declined"
+
+export interface ChangeOrder {
+  changeOrderId: string
+  agreementId: string
+  proposedBy: string
+  description: string
+  amountChange: number
+  daysChange: number
+  status: ChangeOrderStatus
+  createdAt: string
+  respondedAt?: string
 }
 
 export interface Contractor {
@@ -105,7 +174,8 @@ export interface Conversation {
 
 export interface AppNotification {
   notificationId: string
-  audience: UserType
+  /** Only used by the sample notifications in mock-data. */
+  audience?: UserType
   title: string
   body: string
   createdAt: string

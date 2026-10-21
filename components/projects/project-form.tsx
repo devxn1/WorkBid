@@ -42,6 +42,8 @@ export interface ProjectFormValues {
   description: string
   budgetMin: number
   budgetMax: number
+  /** When the client wants it done, e.g. "Within 2 weeks" (optional). */
+  timeline: string | null
   /** S3 paths of the client's photos, in display order. Empty when they added none. */
   images: string[]
 }
@@ -90,6 +92,7 @@ export function ProjectForm({
   const [description, setDescription] = useState(initialValues?.description ?? "")
   const [budgetMin, setBudgetMin] = useState(initialValues ? String(initialValues.budgetMin) : "")
   const [budgetMax, setBudgetMax] = useState(initialValues ? String(initialValues.budgetMax) : "")
+  const [timeline, setTimeline] = useState(initialValues?.timeline ?? "")
   const [photos, setPhotos] = useState<Photo[]>(
     () => initialValues?.images.map((path) => ({ key: path, path })) ?? [],
   )
@@ -161,6 +164,7 @@ export function ProjectForm({
         location: location.trim(),
         budgetMin: min,
         budgetMax: max,
+        timeline: timeline.trim() || null,
         images,
       })
     } catch (err) {
@@ -259,6 +263,18 @@ export function ProjectForm({
           {submitted && !budgetValid && (
             <FieldError>Enter a valid range (max must be at least the min).</FieldError>
           )}
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor="timeline">Timeline (optional)</FieldLabel>
+          <Input
+            id="timeline"
+            value={timeline}
+            onChange={(e) => setTimeline(e.target.value)}
+            maxLength={200}
+            placeholder="e.g. Within 2 weeks, before June 1, or flexible"
+          />
+          <FieldDescription>When you&apos;d like the work done. Contractors propose an exact start date in their bids.</FieldDescription>
         </Field>
 
         <Field data-invalid={photoError ? true : undefined}>

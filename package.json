@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test:workflow": "node --env-file=.env.test.local scripts/workflow-test.mjs"
   },
   "dependencies": {
     "@aws-amplify/ui-react": "^6.15.6",

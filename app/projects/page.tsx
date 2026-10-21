@@ -81,7 +81,7 @@ export default function BrowseProjectsPage() {
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="open">Open for bids</SelectItem>
-              <SelectItem value="awarded">Awarded</SelectItem>
+              <SelectItem value="awarded">Hired</SelectItem>
               <SelectItem value="in_progress">In progress</SelectItem>
               <SelectItem value="completed">Completed</SelectItem>
             </SelectContent>
