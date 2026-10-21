@@ -95,6 +95,17 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* Contractors get an orange accent instead of the client blue.
+   data-role is set on <html> by MarketplaceProvider (lib/store.tsx). */
+:root[data-role="contractor"] {
+  --primary: oklch(0.57 0.16 45);
+  --accent: oklch(0.965 0.02 60);
+  --accent-foreground: oklch(0.47 0.13 45);
+  --info: oklch(0.57 0.16 45);
+  --ring: oklch(0.57 0.16 45);
+  --chart-1: oklch(0.57 0.16 45);
+}
+
 .dark {
   color-scheme: dark;
   --success: oklch(0.62 0.15 155);

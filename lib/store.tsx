@@ -183,6 +183,12 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     })
   }, [refreshAuthUser])
 
+  // Switches the color theme (contractors are orange, see app/globals.css). It's set on
+  // <html> so dialogs and menus, which render outside the page, pick it up too.
+  useEffect(() => {
+    document.documentElement.dataset.role = role
+  }, [role])
+
   // Load every project from the database. Signed-out visitors read as guests
   // ("identityPool"); signed-in users read with their login ("userPool").
   const signedInUserId = authUser?.userId
