@@ -40,6 +40,9 @@ interface NewProjectInput {
   images: string[]
 }
 
+/** Project fields the owner can change while the project is open. */
+type ProjectDetailsInput = Omit<NewProjectInput, "images"> & { images?: string[] }
+
 interface NewBidInput {
   amount: number
   estimatedDays: number
@@ -70,6 +73,7 @@ interface MarketplaceContextValue {
   unreadCount: number
   // actions
   addProject: (input: NewProjectInput) => Promise<Project>
+  updateProjectDetails: (projectId: string, input: ProjectDetailsInput) => Promise<Project>
   addBid: (projectId: string, input: NewBidInput) => Promise<void>
   acceptBid: (bidId: string) => Promise<void>
   rejectBid: (bidId: string) => Promise<void>
@@ -381,6 +385,32 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     [authUser],
   )
 
+  /** Saves the owner's edits to an open project. Throws with a readable message on failure. */
+  const updateProjectDetails = useCallback(
+    async (projectId: string, input: ProjectDetailsInput) => {
+      const project = projects.find((p) => p.projectId === projectId)
+      if (!authUser || project?.clientId !== authUser.userId) throw new Error("Only the client who posted this project can edit it.")
+      if (project.status !== "open") throw new Error("This project can't be edited after a bid is accepted.")
+      const client = generateClient<Schema>()
+      const { data, errors } = await client.models.Project.update({
+        id: projectId,
+        title: input.title,
+        description: input.description,
+        categoryId: input.categoryId,
+        location: input.location,
+        budgetMin: input.budgetMin,
+        budgetMax: input.budgetMax,
+        ...(input.images && { images: input.images }),
+      })
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't save your changes.")
+      const updated = toProject(data)
+      setProjects((prev) => prev.map((p) => (p.projectId === projectId ? updated : p)))
+      toast.success("Project updated")
+      return updated
+    },
+    [authUser, projects],
+  )
+
   /** Places a bid through the placeBid backend function. Throws with a readable message on failure. */
   const addBid = useCallback(async (projectId: string, input: NewBidInput) => {
     const client = generateClient<Schema>()
@@ -517,6 +547,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       notifications,
       unreadCount,
       addProject,
+      updateProjectDetails,
       addBid,
       acceptBid,
       rejectBid,
@@ -547,6 +578,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       notifications,
       unreadCount,
       addProject,
+      updateProjectDetails,
       addBid,
       acceptBid,
       rejectBid,

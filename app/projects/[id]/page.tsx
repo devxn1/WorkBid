@@ -3,7 +3,7 @@
 import { use } from "react"
 import Link from "next/link"
 import { notFound, useRouter } from "next/navigation"
-import { ArrowLeft, CalendarClock, MapPin, MessageSquare, Wallet } from "lucide-react"
+import { ArrowLeft, CalendarClock, MapPin, MessageSquare, Pencil, Wallet } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { categories } from "@/lib/mock-data"
 import { Button } from "@/components/ui/button"
@@ -212,6 +212,16 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                 )
               ) : isOwner ? (
                 <div className="flex flex-col gap-2">
+                  {isOpen && (
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      render={<Link href={`/projects/${project.projectId}/edit`} />}
+                    >
+                      <Pencil data-icon="inline-start" />
+                      Edit project
+                    </Button>
+                  )}
                   {awardedContractor && (
                     <div className="rounded-lg bg-muted p-3 text-sm">
                       <p className="text-xs text-muted-foreground">Awarded to</p>
