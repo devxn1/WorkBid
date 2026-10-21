@@ -11,6 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { StarRating } from "@/components/shared/star-rating"
+import { ProjectImage } from "@/components/shared/project-image"
 import { formatDate, initials } from "@/lib/format"
 
 export default function ContractorProfilePage({ params }: { params: Promise<{ id: string }> }) {
@@ -208,8 +209,8 @@ export default function ContractorProfilePage({ params }: { params: Promise<{ id
                       href={`/projects/${p.projectId}`}
                       className="flex items-center gap-3 rounded-lg p-2 transition-colors hover:bg-muted"
                     >
-                      <img
-                        src={p.images[0] || "/placeholder.svg"}
+                      <ProjectImage
+                        src={p.images[0]}
                         alt=""
                         className="size-12 shrink-0 rounded-md object-cover"
                       />

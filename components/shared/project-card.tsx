@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { CategoryIcon } from "./category-icon"
 import { StatusBadge } from "./status-badge"
+import { ProjectImage } from "./project-image"
 import { formatBudget, relativeTime } from "@/lib/format"
 import { categories } from "@/lib/mock-data"
 import type { Project } from "@/lib/types"
@@ -20,8 +21,8 @@ export function ProjectCard({ project, bidCount }: ProjectCardProps) {
     <Card className="group overflow-hidden py-0 transition-shadow hover:shadow-md">
       <Link href={`/projects/${project.projectId}`} className="block">
         <div className="relative aspect-[16/10] overflow-hidden bg-muted">
-          <img
-            src={project.images[0] || "/placeholder.svg"}
+          <ProjectImage
+            src={project.images[0]}
             alt={project.title}
             className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
           />

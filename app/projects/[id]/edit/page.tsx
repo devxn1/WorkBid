@@ -4,6 +4,7 @@ import { use, useEffect } from "react"
 import Link from "next/link"
 import { notFound, useRouter } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
+import { remove } from "aws-amplify/storage"
 import { useMarketplace } from "@/lib/store"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -42,13 +43,19 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
 
   if (!canEdit) return null
 
+  // Stock photos aren't shown in the form; only the client's own uploads are.
+  const uploadedPhotos = project.images.filter((src) => !isStockImage(src))
+
   async function handleSave(values: ProjectFormValues) {
-    // A project still using its category's stock photo gets the new category's photo.
-    const usesStockPhoto = project!.images.every(isStockImage)
-    await updateProjectDetails(id, {
-      ...values,
-      ...(usesStockPhoto && { images: [stockImageFor(values.categoryId)] }),
-    })
+    // No photos left: fall back to the (possibly new) category's stock photo.
+    const images = values.images.length ? values.images : [stockImageFor(values.categoryId)]
+    await updateProjectDetails(id, { ...values, images })
+
+    // Delete removed photos from S3 only after the project saved, so a failed save loses nothing.
+    const removed = uploadedPhotos.filter((path) => !values.images.includes(path))
+    await Promise.all(
+      removed.map((path) => remove({ path }).catch((err) => console.error("Couldn't delete photo", path, err))),
+    )
     router.push(`/projects/${id}`)
   }
 
@@ -79,6 +86,7 @@ export default function EditProjectPage({ params }: { params: Promise<{ id: stri
               description: project.description,
               budgetMin: project.budgetMin,
               budgetMax: project.budgetMax,
+              images: uploadedPhotos,
             }}
             submitLabel="Save changes"
             submittingLabel="Saving…"

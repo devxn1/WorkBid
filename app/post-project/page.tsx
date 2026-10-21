@@ -19,7 +19,9 @@ export default function PostProjectPage() {
   }, [authLoading, authUser, router])
 
   async function handlePost(values: ProjectFormValues) {
-    const project = await addProject({ ...values, images: [stockImageFor(values.categoryId)] })
+    // No photos uploaded: use the category's stock photo so the project card isn't empty.
+    const images = values.images.length ? values.images : [stockImageFor(values.categoryId)]
+    const project = await addProject({ ...values, images })
     router.push(`/projects/${project.projectId}`)
   }
 

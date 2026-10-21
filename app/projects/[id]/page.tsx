@@ -1,6 +1,6 @@
 "use client"
 
-import { use } from "react"
+import { use, useState } from "react"
 import Link from "next/link"
 import { notFound, useRouter } from "next/navigation"
 import { ArrowLeft, CalendarClock, MapPin, MessageSquare, Pencil, Wallet } from "lucide-react"
@@ -14,7 +14,9 @@ import { CategoryIcon } from "@/components/shared/category-icon"
 import { BidCard } from "@/components/shared/bid-card"
 import { PlaceBidDialog } from "@/components/shared/place-bid-dialog"
 import { ReviewDialog } from "@/components/shared/review-dialog"
+import { ProjectImage } from "@/components/shared/project-image"
 import { formatBudget, formatDate, relativeTime } from "@/lib/format"
+import { cn } from "@/lib/utils"
 
 export default function ProjectDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -33,6 +35,7 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
     completeProject,
     reviews,
   } = useMarketplace()
+  const [photoIndex, setPhotoIndex] = useState(0)
 
   const project = getProject(id)
 
@@ -71,12 +74,33 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
 
       <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-6">
-          <div className="overflow-hidden rounded-xl border border-border bg-muted">
-            <img
-              src={project.images[0] || "/placeholder.svg"}
-              alt={project.title}
-              className="aspect-[16/9] w-full object-cover"
-            />
+          <div className="flex flex-col gap-3">
+            <div className="overflow-hidden rounded-xl border border-border bg-muted">
+              <ProjectImage
+                src={project.images[photoIndex] ?? project.images[0]}
+                alt={project.title}
+                className="aspect-[16/9] w-full object-cover"
+              />
+            </div>
+            {project.images.length > 1 && (
+              <div className="flex gap-2 overflow-x-auto">
+                {project.images.map((src, i) => (
+                  <button
+                    key={src}
+                    type="button"
+                    onClick={() => setPhotoIndex(i)}
+                    aria-label={`Show photo ${i + 1}`}
+                    aria-current={i === photoIndex}
+                    className={cn(
+                      "size-16 shrink-0 overflow-hidden rounded-md border-2 transition-colors",
+                      i === photoIndex ? "border-primary" : "border-transparent opacity-70 hover:opacity-100",
+                    )}
+                  >
+                    <ProjectImage src={src} alt="" className="size-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-3">
