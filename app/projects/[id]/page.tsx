@@ -3,6 +3,7 @@
 import { use, useState } from "react"
 import Link from "next/link"
 import { notFound, useRouter } from "next/navigation"
+import { toast } from "sonner"
 import { ArrowLeft, CalendarClock, MapPin, MessageSquare, Pencil, Wallet } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { categories } from "@/lib/mock-data"
@@ -36,6 +37,7 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
     reviews,
   } = useMarketplace()
   const [photoIndex, setPhotoIndex] = useState(0)
+  const [openingChat, setOpeningChat] = useState(false)
 
   const project = getProject(id)
 
@@ -60,9 +62,17 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
   const hasReview = reviews.some((r) => r.projectId === project.projectId)
   const awardedContractor = project.awardedContractorId ? getContractor(project.awardedContractorId) : undefined
 
-  function handleMessage(contractorId: string) {
-    const convId = startConversation(project!.projectId, contractorId)
-    router.push(`/messages?c=${convId}`)
+  async function handleMessage(contractorId: string) {
+    setOpeningChat(true)
+    try {
+      const convId = await startConversation(project!.projectId, contractorId)
+      router.push(`/messages?c=${convId}`)
+    } catch (err) {
+      toast.error("Couldn't open the conversation", {
+        description: err instanceof Error ? err.message : "Please try again.",
+      })
+      setOpeningChat(false)
+    }
   }
 
   return (
@@ -220,9 +230,20 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
 
               {role === "contractor" ? (
                 myBid ? (
-                  <div className="rounded-lg bg-primary/5 p-3 text-center text-sm">
-                    <p className="font-medium text-foreground">You&apos;ve bid on this project</p>
-                    <p className="text-muted-foreground">Bid status: {myBid.status}</p>
+                  <div className="flex flex-col gap-2">
+                    <div className="rounded-lg bg-primary/5 p-3 text-center text-sm">
+                      <p className="font-medium text-foreground">You&apos;ve bid on this project</p>
+                      <p className="text-muted-foreground">Bid status: {myBid.status}</p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      disabled={openingChat}
+                      onClick={() => handleMessage(myBid.contractorId)}
+                    >
+                      <MessageSquare data-icon="inline-start" />
+                      Message client
+                    </Button>
                   </div>
                 ) : isOpen ? (
                   <PlaceBidDialog
@@ -277,6 +298,7 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                     <Button
                       variant="outline"
                       className="w-full"
+                      disabled={openingChat}
                       onClick={() => handleMessage(awardedContractor.contractorId)}
                     >
                       Message contractor

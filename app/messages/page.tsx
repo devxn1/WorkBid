@@ -2,7 +2,8 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
-import { useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
+import { toast } from "sonner"
 import { ArrowLeft, MessagesSquare, SendHorizontal } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -13,9 +14,14 @@ import { StatusBadge } from "@/components/shared/status-badge"
 import { initials, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
+const MAX_MESSAGE_LENGTH = 2000
+
 function MessagesInner() {
   const searchParams = useSearchParams()
+  const router = useRouter()
   const {
+    authUser,
+    authLoading,
     role,
     conversations,
     currentClientId,
@@ -35,7 +41,13 @@ function MessagesInner() {
   const paramId = searchParams.get("c")
   const [activeId, setActiveId] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
+  const [sending, setSending] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Messages are private, so signed-out visitors go to the login page.
+  useEffect(() => {
+    if (!authLoading && !authUser) router.replace("/login")
+  }, [authLoading, authUser, router])
 
   useEffect(() => {
     if (paramId && myConversations.some((c) => c.conversationId === paramId)) {
@@ -53,11 +65,20 @@ function MessagesInner() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [thread.length, activeId])
 
-  function handleSend(e: React.FormEvent) {
+  async function handleSend(e: React.FormEvent) {
     e.preventDefault()
-    if (!draft.trim() || !active) return
-    sendMessage(active.conversationId, draft.trim())
-    setDraft("")
+    const body = draft.trim()
+    if (!body || !active || sending) return
+    setSending(true)
+    try {
+      await sendMessage(active.conversationId, body)
+      setDraft("")
+    } catch (err) {
+      // Keep the draft so nothing typed is lost.
+      toast.error("Message not sent", { description: err instanceof Error ? err.message : "Please try again." })
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -74,7 +95,7 @@ function MessagesInner() {
             <EmptyDescription>
               {role === "client"
                 ? "Message a contractor from a bid to start a conversation."
-                : "Conversations with clients will appear here."}
+                : "Message a client from a project you've bid on to start a conversation."}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -102,7 +123,7 @@ function MessagesInner() {
                 >
                   <Avatar className="size-10 shrink-0">
                     <AvatarImage
-                      src={c.contractorAvatar || "/placeholder.svg"}
+                      src={(role === "client" && c.contractorAvatar) || "/placeholder.svg"}
                       alt={role === "client" ? c.contractorName : c.clientName}
                     />
                     <AvatarFallback>
@@ -138,7 +159,7 @@ function MessagesInner() {
                 </Button>
                 <Avatar className="size-9">
                   <AvatarImage
-                    src={active.contractorAvatar || "/placeholder.svg"}
+                    src={(role === "client" && active.contractorAvatar) || "/placeholder.svg"}
                     alt={role === "client" ? active.contractorName : active.clientName}
                   />
                   <AvatarFallback>
@@ -166,7 +187,7 @@ function MessagesInner() {
                     <div key={m.messageId} className={cn("flex flex-col gap-1", mine ? "items-end" : "items-start")}>
                       <div
                         className={cn(
-                          "max-w-[80%] rounded-2xl px-4 py-2 text-sm",
+                          "max-w-[80%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2 text-sm",
                           mine
                             ? "rounded-br-sm bg-primary text-primary-foreground"
                             : "rounded-bl-sm bg-muted text-foreground",
@@ -186,8 +207,9 @@ function MessagesInner() {
                   onChange={(e) => setDraft(e.target.value)}
                   placeholder="Type a message..."
                   aria-label="Message"
+                  maxLength={MAX_MESSAGE_LENGTH}
                 />
-                <Button type="submit" size="icon" disabled={!draft.trim()} aria-label="Send message">
+                <Button type="submit" size="icon" disabled={!draft.trim() || sending} aria-label="Send message">
                   <SendHorizontal />
                 </Button>
               </form>

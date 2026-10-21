@@ -143,6 +143,8 @@ const schema = a
     ]),
 
   // A chat thread between one client and one contractor about a project.
+  // Created only through the startConversation mutation, which checks the two people
+  // are really connected by a bid and fills in their names on the server.
   Conversation: a
     .model({
       projectId: a.id().required(),
@@ -155,10 +157,24 @@ const schema = a
     })
     .secondaryIndexes((index) => [index("clientId"), index("contractorId")])
     .authorization((allow) => [
-      allow.ownerDefinedIn("clientId").identityClaim("sub").to(["create", "read", "update"]),
-      allow.ownerDefinedIn("contractorId").identityClaim("sub").to(["create", "read", "update"]),
+      allow.ownerDefinedIn("clientId").identityClaim("sub").to(["read"]),
+      allow.ownerDefinedIn("contractorId").identityClaim("sub").to(["read"]),
     ]),
 
+  // Opens (or returns the existing) conversation between a project's client and a
+  // contractor who bid on it. Either of the two can call it.
+  startConversation: a
+    .mutation()
+    .arguments({
+      projectId: a.id().required(),
+      contractorId: a.id().required(),
+    })
+    .returns(a.ref("Conversation"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(bidActions)),
+
+  // Written directly by the browser: the sender must be the signed-in user. The app
+  // also ignores any message whose sender/receiver aren't the conversation's two people.
   Message: a
     .model({
       conversationId: a.id().required(),

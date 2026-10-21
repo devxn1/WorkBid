@@ -23,7 +23,9 @@ const client = generateClient<Schema>()
 
 type PlaceBidEvent = Parameters<Schema["placeBid"]["functionHandler"]>[0]
 type RespondToBidEvent = Parameters<Schema["respondToBid"]["functionHandler"]>[0]
+type StartConversationEvent = Parameters<Schema["startConversation"]["functionHandler"]>[0]
 type Bid = Schema["Bid"]["type"]
+type Conversation = Schema["Conversation"]["type"]
 
 /** The signed-in caller's Cognito user id ("sub"). */
 function callerId(event: { identity?: unknown }): string {
@@ -110,7 +112,53 @@ async function respondToBid(event: RespondToBidEvent): Promise<Bid> {
   return accepted
 }
 
-export const handler = async (event: PlaceBidEvent | RespondToBidEvent) => {
+async function startConversation(event: StartConversationEvent): Promise<Conversation> {
+  const callerIdValue = callerId(event)
+  const { projectId, contractorId } = event.arguments
+
+  const project = unwrap(await client.models.Project.get({ id: projectId }), "Project")
+  if (callerIdValue !== project.clientId && callerIdValue !== contractorId) {
+    throw new Error("Only the project's client or the contractor can start this conversation.")
+  }
+
+  // The two are only connected if the contractor bid on this project.
+  const { data: projectBids } = await client.models.Bid.listBidByProjectId({ projectId }, { limit: 1000 })
+  if (!projectBids.some((b) => b.contractorId === contractorId)) {
+    throw new Error("You can only message about a project the contractor has bid on.")
+  }
+
+  const { data: theirConversations } = await client.models.Conversation.listConversationByContractorId(
+    { contractorId },
+    { limit: 1000 },
+  )
+  const existing = theirConversations.find((c) => c.projectId === projectId)
+  if (existing) return existing
+
+  // Names come from the database, not the browser, so nobody can pose as someone else.
+  const [{ data: contractorProfile }, { data: contractorUser }] = await Promise.all([
+    client.models.ContractorProfile.get({ contractorId }),
+    client.models.UserProfile.get({ userId: contractorId }),
+  ])
+  const contractorName =
+    contractorProfile?.contractorName ||
+    `${contractorUser?.firstName ?? ""} ${contractorUser?.lastName ?? ""}`.trim() ||
+    "Contractor"
+
+  return unwrap(
+    await client.models.Conversation.create({
+      projectId,
+      projectTitle: project.title,
+      clientId: project.clientId,
+      clientName: project.clientName,
+      contractorId,
+      contractorName,
+      contractorAvatar: contractorProfile?.avatar ?? contractorUser?.avatar ?? null,
+    }),
+    "Start conversation",
+  )
+}
+
+export const handler = async (event: PlaceBidEvent | RespondToBidEvent | StartConversationEvent) => {
   // Amplify puts the mutation name at the top level of the event ("fieldName"),
   // not under event.info like a plain AppSync Lambda resolver.
   const fieldName = (event as { fieldName?: string }).fieldName ?? event.info?.fieldName
@@ -119,6 +167,8 @@ export const handler = async (event: PlaceBidEvent | RespondToBidEvent) => {
       return placeBid(event as PlaceBidEvent)
     case "respondToBid":
       return respondToBid(event as RespondToBidEvent)
+    case "startConversation":
+      return startConversation(event as StartConversationEvent)
     default:
       throw new Error(`Unknown operation: ${fieldName}`)
   }

@@ -10,12 +10,10 @@ import {
   clientNotifications as seedClientNotifs,
   contractorNotifications as seedContractorNotifs,
   contractors as seedContractors,
-  conversations as seedConversations,
   CURRENT_CLIENT_ID,
   CURRENT_CONTRACTOR_ID,
   CLIENT_USER,
   CONTRACTOR_USER,
-  messages as seedMessages,
   reviews as seedReviews,
 } from "./mock-data"
 import type {
@@ -79,8 +77,10 @@ interface MarketplaceContextValue {
   rejectBid: (bidId: string) => Promise<void>
   completeProject: (projectId: string) => void
   addReview: (projectId: string, rating: number, reviewText: string) => void
-  sendMessage: (conversationId: string, body: string) => void
-  startConversation: (projectId: string, contractorId: string) => string
+  /** Sends a message. Throws with a readable message on failure. */
+  sendMessage: (conversationId: string, body: string) => Promise<void>
+  /** Opens (or finds) the conversation for a project and contractor; returns its id. Throws on failure. */
+  startConversation: (projectId: string, contractorId: string) => Promise<string>
   markNotificationsRead: () => void
   // helpers
   getContractor: (id: string) => Contractor | undefined
@@ -95,6 +95,67 @@ const MarketplaceContext = createContext<MarketplaceContextValue | null>(null)
 
 type ProjectRow = Schema["Project"]["type"]
 type BidRow = Schema["Bid"]["type"]
+type ConversationRow = Schema["Conversation"]["type"]
+type MessageRow = Schema["Message"]["type"]
+
+/** A conversation as stored; the project's status is added from the loaded projects. */
+type ConversationInfo = Omit<Conversation, "projectStatus"> & { createdAt: string }
+
+function toConversation(row: ConversationRow): ConversationInfo {
+  return {
+    conversationId: row.id,
+    projectId: row.projectId,
+    projectTitle: row.projectTitle,
+    clientId: row.clientId,
+    clientName: row.clientName,
+    contractorId: row.contractorId,
+    contractorName: row.contractorName,
+    contractorAvatar: row.contractorAvatar ?? "",
+    createdAt: row.createdAt,
+  }
+}
+
+function toMessage(row: MessageRow): Message {
+  return {
+    messageId: row.id,
+    conversationId: row.conversationId,
+    senderId: row.senderId,
+    senderName: row.senderName,
+    receiverId: row.receiverId,
+    messageBody: row.messageBody,
+    sentAt: row.sentAt,
+  }
+}
+
+/**
+ * True if a message is really between the conversation's two people. Anyone can write a
+ * Message row naming any conversation, so this drops messages slipped in by outsiders.
+ */
+function isBetweenParticipants(message: Message, conv: ConversationInfo) {
+  const people = [conv.clientId, conv.contractorId]
+  return (
+    message.senderId !== message.receiverId && people.includes(message.senderId) && people.includes(message.receiverId)
+  )
+}
+
+/** Reads every page of a list query. */
+async function listAll<T>(
+  fetchPage: (nextToken: string | null | undefined) => Promise<{
+    data: T[]
+    errors?: { message: string }[]
+    nextToken?: string | null
+  }>,
+) {
+  const rows: T[] = []
+  let nextToken: string | null | undefined
+  do {
+    const page = await fetchPage(nextToken)
+    if (page.errors?.length) throw new Error(page.errors[0].message)
+    rows.push(...page.data)
+    nextToken = page.nextToken
+  } while (nextToken)
+  return rows
+}
 
 /** Converts a database Bid row into the shape the pages use. */
 function toBid(row: BidRow): Bid {
@@ -153,8 +214,8 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   const [contractorInfo, setContractorInfo] = useState<Record<string, ContractorInfo>>({})
   const requestedContractors = useRef(new Set<string>())
   const [reviews, setReviews] = useState<Review[]>(seedReviews)
-  const [conversations, setConversations] = useState<Conversation[]>(seedConversations)
-  const [messages, setMessages] = useState<Message[]>(seedMessages)
+  const [conversationRows, setConversationRows] = useState<ConversationInfo[]>([])
+  const [messages, setMessages] = useState<Message[]>([])
   const [clientNotifs, setClientNotifs] = useState<AppNotification[]>(seedClientNotifs)
   const [contractorNotifs, setContractorNotifs] = useState<AppNotification[]>(seedContractorNotifs)
 
@@ -299,6 +360,93 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
         console.error("Failed to load contractor info", err)
       })
   }, [bids, projects, authUser, signedInUserId])
+
+  // Conversations and their messages. The database only returns the ones you're part of.
+  const signedInUserType = authUser?.userType
+  const loadConversations = useCallback(async () => {
+    if (!signedInUserId) {
+      setConversationRows([])
+      setMessages([])
+      return
+    }
+    const client = generateClient<Schema>()
+    try {
+      const rows =
+        signedInUserType === "client"
+          ? await listAll((nextToken) =>
+              client.models.Conversation.listConversationByClientId({ clientId: signedInUserId }, { nextToken }),
+            )
+          : await listAll((nextToken) =>
+              client.models.Conversation.listConversationByContractorId(
+                { contractorId: signedInUserId },
+                { nextToken },
+              ),
+            )
+      const convs = rows.map(toConversation)
+      const threads = await Promise.all(
+        convs.map(async (conv) => {
+          const msgRows = await listAll((nextToken) =>
+            client.models.Message.listMessageByConversationIdAndSentAt(
+              { conversationId: conv.conversationId },
+              { nextToken },
+            ),
+          )
+          return msgRows.map(toMessage).filter((m) => isBetweenParticipants(m, conv))
+        }),
+      )
+      setConversationRows(convs)
+      setMessages(threads.flat())
+    } catch (err) {
+      console.error("Failed to load conversations", err)
+    }
+  }, [signedInUserId, signedInUserType])
+
+  useEffect(() => {
+    if (!authLoading) loadConversations()
+  }, [authLoading, loadConversations])
+
+  /** Adds a message to the local list (skipping duplicates: you also receive your own sends live). */
+  const addMessage = useCallback((message: Message) => {
+    setMessages((prev) => (prev.some((m) => m.messageId === message.messageId) ? prev : [...prev, message]))
+  }, [])
+
+  // Live updates: new messages to or from you arrive here without a refresh.
+  const conversationsRef = useRef(conversationRows)
+  useEffect(() => {
+    conversationsRef.current = conversationRows
+  }, [conversationRows])
+  useEffect(() => {
+    if (!signedInUserId) return
+    const client = generateClient<Schema>()
+    const subscription = client.models.Message.onCreate().subscribe({
+      next: (row) => {
+        const message = toMessage(row)
+        const conv = conversationsRef.current.find((c) => c.conversationId === message.conversationId)
+        // First message in a conversation someone else just opened: reload to get it.
+        if (!conv) loadConversations()
+        else if (isBetweenParticipants(message, conv)) addMessage(message)
+      },
+      error: (err) => console.error("Live message updates stopped", err),
+    })
+    return () => subscription.unsubscribe()
+  }, [signedInUserId, loadConversations, addMessage])
+
+  // Newest activity first, with each project's current status.
+  const conversations = useMemo<Conversation[]>(() => {
+    const lastActivity = new Map<string, string>()
+    conversationRows.forEach((c) => lastActivity.set(c.conversationId, c.createdAt))
+    messages.forEach((m) => {
+      if (m.sentAt > (lastActivity.get(m.conversationId) ?? "")) lastActivity.set(m.conversationId, m.sentAt)
+    })
+    return conversationRows
+      .map(({ createdAt: _createdAt, ...c }) => ({
+        ...c,
+        projectStatus: projects.find((p) => p.projectId === c.projectId)?.status ?? "open",
+      }))
+      .sort((a, b) =>
+        (lastActivity.get(b.conversationId) ?? "").localeCompare(lastActivity.get(a.conversationId) ?? ""),
+      )
+  }, [conversationRows, messages, projects])
 
   /** Saves changes to a project the signed-in client owns and updates the local copy. */
   const updateProjectInDb = useCallback(
@@ -480,47 +628,35 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   )
 
   const sendMessage = useCallback(
-    (conversationId: string, body: string) => {
-      const conv = conversations.find((c) => c.conversationId === conversationId)
-      if (!conv) return
-      const isClient = role === "client"
-      const message: Message = {
-        messageId: uid("m"),
+    async (conversationId: string, body: string) => {
+      const conv = conversationRows.find((c) => c.conversationId === conversationId)
+      if (!authUser || !conv) throw new Error("Couldn't find this conversation.")
+      const isClient = authUser.userId === conv.clientId
+      const client = generateClient<Schema>()
+      const { data, errors } = await client.models.Message.create({
         conversationId,
-        senderId: isClient ? conv.clientId : conv.contractorId,
-        senderName: isClient ? conv.clientName : conv.contractorName,
+        senderId: authUser.userId,
+        senderName: `${authUser.firstName} ${authUser.lastName}`.trim(),
         receiverId: isClient ? conv.contractorId : conv.clientId,
         messageBody: body,
         sentAt: new Date().toISOString(),
-      }
-      setMessages((prev) => [...prev, message])
+      })
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't send your message.")
+      addMessage(toMessage(data))
     },
-    [conversations, role],
+    [authUser, conversationRows, addMessage],
   )
 
-  const startConversation = useCallback(
-    (projectId: string, contractorId: string) => {
-      const existing = conversations.find((c) => c.projectId === projectId && c.contractorId === contractorId)
-      if (existing) return existing.conversationId
-      const project = projects.find((p) => p.projectId === projectId)
-      const contractor = getContractor(contractorId)
-      if (!project || !contractor) return ""
-      const conv: Conversation = {
-        conversationId: uid("conv"),
-        projectId,
-        projectTitle: project.title,
-        projectStatus: project.status,
-        clientId: project.clientId,
-        clientName: project.clientName,
-        contractorId,
-        contractorName: contractor.contractorName,
-        contractorAvatar: contractor.avatar,
-      }
-      setConversations((prev) => [conv, ...prev])
-      return conv.conversationId
-    },
-    [conversations, projects, getContractor],
-  )
+  const startConversation = useCallback(async (projectId: string, contractorId: string) => {
+    const client = generateClient<Schema>()
+    const { data, errors } = await client.mutations.startConversation({ projectId, contractorId })
+    if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't open the conversation.")
+    const conv = toConversation(data)
+    setConversationRows((prev) =>
+      prev.some((c) => c.conversationId === conv.conversationId) ? prev : [conv, ...prev],
+    )
+    return conv.conversationId
+  }, [])
 
   const markNotificationsRead = useCallback(() => {
     if (role === "client") setClientNotifs((prev) => prev.map((n) => ({ ...n, read: true })))
