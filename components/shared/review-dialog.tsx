@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Star } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -20,26 +21,36 @@ import { cn } from "@/lib/utils"
 import type { Project } from "@/lib/types"
 
 interface ReviewDialogProps {
-  project: Project
+  contractorId: string
+  /** The completed project the client hired this contractor for. Leave out for an unverified review. */
+  project?: Project
   trigger: React.ReactElement
 }
 
-export function ReviewDialog({ project, trigger }: ReviewDialogProps) {
-  const { addReview, getContractor } = useMarketplace()
+export function ReviewDialog({ contractorId, project, trigger }: ReviewDialogProps) {
+  const { submitReview, getContractor } = useMarketplace()
   const [open, setOpen] = useState(false)
   const [rating, setRating] = useState(0)
   const [hover, setHover] = useState(0)
   const [text, setText] = useState("")
+  const [saving, setSaving] = useState(false)
 
-  const contractor = project.awardedContractorId ? getContractor(project.awardedContractorId) : undefined
+  const contractor = getContractor(contractorId)
   const valid = rating > 0 && text.trim().length >= 10
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!valid) return
-    addReview(project.projectId, rating, text.trim())
-    setOpen(false)
-    setRating(0)
-    setText("")
+    setSaving(true)
+    try {
+      await submitReview(contractorId, rating, text.trim(), project?.projectId)
+      setOpen(false)
+      setRating(0)
+      setText("")
+    } catch (err) {
+      toast.error("Couldn't save your review", { description: err instanceof Error ? err.message : undefined })
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -48,7 +59,11 @@ export function ReviewDialog({ project, trigger }: ReviewDialogProps) {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Review {contractor?.businessName ?? "contractor"}</DialogTitle>
-          <DialogDescription>Share your experience on “{project.title}”.</DialogDescription>
+          <DialogDescription>
+            {project
+              ? `Share your experience on “${project.title}”. It's marked as a verified hire.`
+              : "You didn't hire them through WorkBid, so this shows as an unverified review."}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
@@ -91,8 +106,8 @@ export function ReviewDialog({ project, trigger }: ReviewDialogProps) {
 
         <DialogFooter>
           <DialogClose render={<Button variant="outline">Cancel</Button>} />
-          <Button onClick={handleSubmit} disabled={!valid}>
-            Submit review
+          <Button onClick={handleSubmit} disabled={!valid || saving}>
+            {saving ? "Saving…" : "Submit review"}
           </Button>
         </DialogFooter>
       </DialogContent>

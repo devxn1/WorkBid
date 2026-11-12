@@ -311,6 +311,7 @@ export const reviews: Review[] = [
     rating: 5,
     reviewText:
       "David was fantastic — showed up on time, explained everything, and the tub filler is perfect. Would absolutely hire FlowRight again.",
+    verified: true,
     createdAt: "2026-07-03T15:00:00Z",
   },
   {
@@ -323,6 +324,7 @@ export const reviews: Review[] = [
     rating: 5,
     reviewText:
       "Torres Construction did an incredible job on our floors. Clean, fast, and the transitions between rooms are seamless. Highly recommend.",
+    verified: true,
     createdAt: "2026-06-10T10:00:00Z",
   },
   {
@@ -334,6 +336,7 @@ export const reviews: Review[] = [
     contractorId: "c1",
     rating: 5,
     reviewText: "Second project with Miguel's team. Detailed quote, no surprises, great communication throughout.",
+    verified: true,
     createdAt: "2026-04-18T10:00:00Z",
   },
   {
@@ -345,6 +348,7 @@ export const reviews: Review[] = [
     contractorId: "c5",
     rating: 5,
     reviewText: "Emma's crew transformed our front yard. The design was thoughtful and they finished ahead of schedule.",
+    verified: true,
     createdAt: "2026-05-02T10:00:00Z",
   },
   {
@@ -356,6 +360,7 @@ export const reviews: Review[] = [
     contractorId: "c2",
     rating: 5,
     reviewText: "Quick, clean install and Alicia walked me through the load calculation. Very professional.",
+    verified: true,
     createdAt: "2026-06-20T10:00:00Z",
   },
   {
@@ -367,6 +372,7 @@ export const reviews: Review[] = [
     contractorId: "c4",
     rating: 4,
     reviewText: "Good work overall and fair price. Took a couple extra days but the finish looks great.",
+    verified: true,
     createdAt: "2026-03-28T10:00:00Z",
   },
   {
@@ -378,6 +384,7 @@ export const reviews: Review[] = [
     contractorId: "c6",
     rating: 5,
     reviewText: "Summit handled our insurance claim start to finish and the new roof looks amazing. Zero hassle.",
+    verified: true,
     createdAt: "2026-02-14T10:00:00Z",
   },
 ]

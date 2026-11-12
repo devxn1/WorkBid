@@ -315,22 +315,40 @@ const schema = a
     .authorization((allow) => [allow.authenticated()])
     .handler(a.handler.function(bidActions)),
 
+  // A client's review of a contractor. Created only by submitReview, which fills in the
+  // client's name and decides `verified`: true when the client hired this contractor
+  // through WorkBid and the project is completed (projectId/projectTitle are set then).
   Review: a
     .model({
-      projectId: a.id().required(),
-      projectTitle: a.string().required(),
+      projectId: a.id(),
+      projectTitle: a.string(),
       clientId: a.id().required(),
       clientName: a.string().required(),
       contractorId: a.id().required(),
       rating: a.integer().required(),
       reviewText: a.string().required(),
+      verified: a.boolean().required(),
     })
-    .secondaryIndexes((index) => [index("contractorId"), index("projectId")])
+    .secondaryIndexes((index) => [index("contractorId")])
     .authorization((allow) => [
-      allow.ownerDefinedIn("clientId").identityClaim("sub"),
+      allow.ownerDefinedIn("clientId").identityClaim("sub").to(["read"]),
       allow.authenticated().to(["read"]),
       allow.guest().to(["read"]),
     ]),
+
+  // A client reviews a contractor. With projectId (a completed project where they hired
+  // this contractor) the review is verified; without one it's an unverified review.
+  submitReview: a
+    .mutation()
+    .arguments({
+      contractorId: a.id().required(),
+      projectId: a.id(),
+      rating: a.integer().required(),
+      reviewText: a.string().required(),
+    })
+    .returns(a.ref("Review"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(bidActions)),
 
   // A chat thread between one client and one contractor about a project.
   // Created only through the startConversation mutation, which checks the two people

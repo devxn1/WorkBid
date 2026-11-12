@@ -82,7 +82,11 @@ interface MarketplaceContextValue {
   /** Client: confirms the bid's current version (`bidVersionId`) and hires the contractor. */
   confirmAgreement: (bidId: string, bidVersionId: string) => Promise<void>
   completeProject: (projectId: string) => Promise<void>
-  addReview: (projectId: string, rating: number, reviewText: string) => void
+  /**
+   * Client: reviews a contractor. Pass the completed project you hired them for to make it
+   * a verified review. Throws with a readable message on failure.
+   */
+  submitReview: (contractorId: string, rating: number, reviewText: string, projectId?: string) => Promise<void>
   /** Sends a message. Throws with a readable message on failure. */
   sendMessage: (conversationId: string, body: string) => Promise<void>
   /** Opens (or finds) the conversation for a project and contractor; returns its id. Throws on failure. */
@@ -90,6 +94,10 @@ interface MarketplaceContextValue {
   markNotificationsRead: () => void
   // helpers
   getContractor: (id: string) => Contractor | undefined
+  /** Loads a contractor's details if they aren't loaded yet (e.g. opening their profile page). */
+  requestContractor: (id: string) => void
+  /** Whether a contractor's details are still loading, loaded, or don't exist. */
+  contractorStatus: (id: string) => "loading" | "found" | "missing"
   getProject: (id: string) => Project | undefined
   getBidsForProject: (projectId: string) => Bid[]
   getBidsByContractor: (contractorId: string) => Bid[]
@@ -104,6 +112,7 @@ type BidRow = Schema["Bid"]["type"]
 type ConversationRow = Schema["Conversation"]["type"]
 type MessageRow = Schema["Message"]["type"]
 type NotificationRow = Schema["Notification"]["type"]
+type ReviewRow = Schema["Review"]["type"]
 
 function toNotification(row: NotificationRow): AppNotification {
   return {
@@ -194,6 +203,21 @@ function toBid(row: BidRow): Bid {
   }
 }
 
+function toReview(row: ReviewRow): Review {
+  return {
+    reviewId: row.id,
+    projectId: row.projectId ?? undefined,
+    projectTitle: row.projectTitle ?? undefined,
+    clientId: row.clientId,
+    clientName: row.clientName,
+    contractorId: row.contractorId,
+    rating: row.rating,
+    reviewText: row.reviewText,
+    verified: row.verified,
+    createdAt: row.createdAt,
+  }
+}
+
 /** Contractor details loaded from the database (profile fields only; stats are calculated). */
 type ContractorInfo = Omit<Contractor, "rating" | "reviewCount" | "completedProjects">
 
@@ -219,10 +243,6 @@ function toProject(row: ProjectRow): Project {
   }
 }
 
-function uid(prefix: string) {
-  return `${prefix}_${Math.random().toString(36).slice(2, 9)}`
-}
-
 export function MarketplaceProvider({ children }: { children: React.ReactNode }) {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
@@ -234,8 +254,11 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   const [bids, setBids] = useState<Bid[]>([])
   const [bidsLoading, setBidsLoading] = useState(true)
   // Real contractors (by Cognito user id), loaded from ContractorProfile/UserProfile as needed.
-  const [contractorInfo, setContractorInfo] = useState<Record<string, ContractorInfo>>({})
+  // null = that id isn't a contractor.
+  const [contractorInfo, setContractorInfo] = useState<Record<string, ContractorInfo | null>>({})
   const requestedContractors = useRef(new Set<string>())
+  // Contractors a page asked for directly (see requestContractor).
+  const [wantedContractors, setWantedContractors] = useState<string[]>([])
   const [reviews, setReviews] = useState<Review[]>(seedReviews)
   const [conversationRows, setConversationRows] = useState<ConversationInfo[]>([])
   const [messages, setMessages] = useState<Message[]>([])
@@ -402,6 +425,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     bids.forEach((b) => ids.add(b.contractorId))
     projects.forEach((p) => p.awardedContractorId && ids.add(p.awardedContractorId))
     if (authUser?.userType === "contractor") ids.add(authUser.userId)
+    wantedContractors.forEach((id) => ids.add(id))
     const missing = [...ids].filter(
       (id) => !requestedContractors.current.has(id) && !seedContractors.some((c) => c.contractorId === id),
     )
@@ -411,12 +435,14 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     const client = generateClient<Schema>()
     const authMode = signedInUserId ? "userPool" : "identityPool"
     Promise.all(
-      missing.map(async (id): Promise<[string, ContractorInfo]> => {
+      missing.map(async (id): Promise<[string, ContractorInfo | null]> => {
         const [{ data: cp }, user] = await Promise.all([
           client.models.ContractorProfile.get({ contractorId: id }, { authMode }),
           // Guests can't read UserProfile; that's fine, ContractorProfile has the name.
           signedInUserId ? client.models.UserProfile.get({ userId: id }).then((r) => r.data) : Promise.resolve(null),
         ])
+        // Neither a business profile nor a contractor account: not a contractor.
+        if (!cp && user?.userType !== "contractor") return [id, null]
         const personName = user ? `${user.firstName} ${user.lastName}`.trim() : ""
         return [
           id,
@@ -443,7 +469,32 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
         missing.forEach((id) => requestedContractors.current.delete(id))
         console.error("Failed to load contractor info", err)
       })
-  }, [bids, projects, authUser, signedInUserId])
+  }, [bids, projects, authUser, signedInUserId, wantedContractors])
+
+  const requestContractor = useCallback((id: string) => {
+    setWantedContractors((prev) => (prev.includes(id) ? prev : [...prev, id]))
+  }, [])
+  const contractorStatus = useCallback(
+    (id: string) => {
+      if (seedContractors.some((c) => c.contractorId === id)) return "found" as const
+      if (!(id in contractorInfo)) return "loading" as const
+      return contractorInfo[id] ? ("found" as const) : ("missing" as const)
+    },
+    [contractorInfo],
+  )
+
+  // Every review (they're public). The demo reviews stay for the demo contractors.
+  useEffect(() => {
+    if (authLoading) return
+    const client = generateClient<Schema>()
+    const authMode = signedInUserId ? "userPool" : "identityPool"
+    listAll((nextToken) => client.models.Review.list({ authMode, limit: 100, nextToken }))
+      .then((rows) => {
+        const loaded = rows.map(toReview).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        setReviews([...loaded, ...seedReviews])
+      })
+      .catch((err) => console.error("Failed to load reviews", err))
+  }, [authLoading, signedInUserId])
 
   // Conversations and their messages. The database only returns the ones you're part of.
   const signedInUserType = authUser?.userType
@@ -549,6 +600,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   const getContractor = useCallback(
     (id: string): Contractor | undefined => {
       const info = contractorInfo[id]
+      if (info === null) return undefined
       if (!info) return seedContractors.find((c) => c.contractorId === id)
       const theirReviews = reviews.filter((r) => r.contractorId === id)
       return {
@@ -707,25 +759,17 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     toast.success("Project marked complete", { description: "You can now leave a review for the contractor." })
   }, [])
 
-  const addReview = useCallback(
-    (projectId: string, rating: number, reviewText: string) => {
-      const project = projects.find((p) => p.projectId === projectId)
-      if (!project || !project.awardedContractorId) return
-      const review: Review = {
-        reviewId: uid("r"),
-        projectId,
-        projectTitle: project.title,
-        clientId: CURRENT_CLIENT_ID,
-        clientName: `${CLIENT_USER.firstName} ${CLIENT_USER.lastName}`,
-        contractorId: project.awardedContractorId,
-        rating,
-        reviewText,
-        createdAt: new Date().toISOString(),
-      }
-      setReviews((prev) => [review, ...prev])
+  const submitReview = useCallback(
+    async (contractorId: string, rating: number, reviewText: string, projectId?: string) => {
+      const client = generateClient<Schema>()
+      const row = orThrow(
+        await client.mutations.submitReview({ contractorId, rating, reviewText, projectId }),
+        "Couldn't save your review.",
+      )
+      setReviews((prev) => [toReview(row), ...prev])
       toast.success("Review submitted", { description: "Thanks for sharing your feedback!" })
     },
-    [projects],
+    [],
   )
 
   const sendMessage = useCallback(
@@ -797,11 +841,13 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       declineBid,
       confirmAgreement,
       completeProject,
-      addReview,
+      submitReview,
       sendMessage,
       startConversation,
       markNotificationsRead,
       getContractor,
+      requestContractor,
+      contractorStatus,
       getProject,
       getBidsForProject,
       getBidsByContractor,
@@ -832,11 +878,13 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       declineBid,
       confirmAgreement,
       completeProject,
-      addReview,
+      submitReview,
       sendMessage,
       startConversation,
       markNotificationsRead,
       getContractor,
+      requestContractor,
+      contractorStatus,
       getProject,
       getBidsForProject,
       getBidsByContractor,

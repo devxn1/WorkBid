@@ -348,8 +348,66 @@ async function run() {
   await as(winnerName)
   await expectFail("the contractor can't mark the project complete", client.mutations.completeProject({ projectId: project.id }))
   await as("client")
+  const review = (extra = {}) => ({
+    contractorId: ids[winnerName],
+    projectId: project.id,
+    rating: 5,
+    reviewText: "Great work on the porch, finished on time.",
+    ...extra,
+  })
+  await expectFail(
+    "the project can't be reviewed before it's complete",
+    client.mutations.submitReview(review()),
+    /once it's marked complete/i,
+  )
   const completed = await expectOk("client marks it complete", client.mutations.completeProject({ projectId: project.id }))
   check("project is completed", completed?.status === "completed")
+
+  section("10. Reviews")
+  await as(winnerName)
+  await expectFail("a contractor can't leave reviews", client.mutations.submitReview(review()), /only client accounts/i)
+  await as("client")
+  await expectFail("a rating must be 1 to 5", client.mutations.submitReview(review({ rating: 6 })), /1 to 5/)
+  await expectFail("a review needs some text", client.mutations.submitReview(review({ reviewText: "ok" })), /at least 10/)
+  await expectFail(
+    "a verified review must be for the hired contractor",
+    client.mutations.submitReview(review({ contractorId: ids[loserName] })),
+    /wasn't hired/i,
+  )
+  await expectFail(
+    "the client can't write reviews directly",
+    client.models.Review.create({
+      clientId: ids.client,
+      clientName: "Fake",
+      contractorId: ids[winnerName],
+      rating: 5,
+      reviewText: "Written straight to the table.",
+      verified: true,
+    }),
+  )
+  const verified = await expectOk("client reviews the hired contractor", client.mutations.submitReview(review()))
+  check("…and it's marked verified with the project", verified?.verified === true && verified?.projectTitle === project.title)
+  await expectFail("a project can only be reviewed once", client.mutations.submitReview(review()), /already reviewed this project/i)
+  await expectFail("the client can't edit a review", client.models.Review.update({ id: verified?.id ?? "none", rating: 1 }))
+
+  // One unverified review per client per contractor, ever, so a re-run may find it already there.
+  const unverified = await call(
+    client.mutations.submitReview({ contractorId: ids[loserName], rating: 4, reviewText: "Good to talk to, quick replies." }),
+  )
+  check(
+    "client can leave an unverified review for a contractor they didn't hire",
+    unverified.error ? /already reviewed/i.test(unverified.error) : unverified.data?.verified === false,
+    unverified.error,
+  )
+  await expectFail(
+    "…but only one",
+    client.mutations.submitReview({ contractorId: ids[loserName], rating: 4, reviewText: "Trying a second time here." }),
+    /already reviewed/i,
+  )
+
+  await as(winnerName)
+  const reviewNotes = await call(client.models.Notification.listNotificationByUserId({ userId: ids[winnerName] }))
+  check("the contractor was notified of the review", reviewNotes.data?.some((n) => n.title === "New review"))
 }
 
 // Clients can't delete projects: the server-managed status fields block deletes, which also

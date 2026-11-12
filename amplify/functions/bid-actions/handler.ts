@@ -32,6 +32,7 @@ type Operation =
   | "proposeChangeOrder"
   | "respondToChangeOrder"
   | "startConversation"
+  | "submitReview"
 /** The event a mutation's handler receives (its arguments plus the caller's identity). */
 type Args<K extends Operation> = Parameters<Schema[K]["functionHandler"]>[0]
 type Bid = Schema["Bid"]["type"]
@@ -41,6 +42,7 @@ type Project = Schema["Project"]["type"]
 type Agreement = Schema["Agreement"]["type"]
 type ChangeOrder = Schema["ChangeOrder"]["type"]
 type Conversation = Schema["Conversation"]["type"]
+type Review = Schema["Review"]["type"]
 
 /** Bids that are still in play: the client can accept, decline or ask for changes. */
 const OPEN_BID_STATUSES: BidStatus[] = ["pending", "revision_requested"]
@@ -722,6 +724,65 @@ async function startConversation(event: Args<"startConversation">): Promise<Conv
 }
 
 // ---------------------------------------------------------------------------
+// Reviews
+// ---------------------------------------------------------------------------
+
+async function submitReview(event: Args<"submitReview">): Promise<Review> {
+  const caller = callerId(event)
+  const { contractorId, projectId, rating } = event.arguments
+  const reviewText = event.arguments.reviewText.trim()
+
+  const [{ data: me }, { data: contractor }] = await Promise.all([
+    client.models.UserProfile.get({ userId: caller }),
+    client.models.UserProfile.get({ userId: contractorId }),
+  ])
+  if (me?.userType !== "client") throw new Error("Only client accounts can leave reviews.")
+  if (contractor?.userType !== "contractor") throw new Error("That contractor doesn't exist.")
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new Error("Pick a rating from 1 to 5 stars.")
+  if (reviewText.length < 10) throw new Error("Write a little more (at least 10 characters).")
+  if (reviewText.length > 2000) throw new Error("That review is too long (2000 characters max).")
+
+  // The id says what the review is for, so a second review of the same project (or a
+  // second unverified review of the same contractor) is refused by the database itself.
+  let id = `client-${caller}-${contractorId}`
+  let project: Project | null = null
+  if (projectId) {
+    project = unwrap(await client.models.Project.get({ id: projectId }), "Project")
+    if (project.clientId !== caller) throw new Error("You can only review your own projects.")
+    if (project.awardedContractorId !== contractorId) throw new Error("This contractor wasn't hired for that project.")
+    if (project.status !== "completed") throw new Error("You can review the project once it's marked complete.")
+    id = `project-${projectId}`
+  } else {
+    // Unverified reviews are for contractors you haven't reviewed in any way yet.
+    const { data: theirReviews } = await client.models.Review.listReviewByContractorId({ contractorId }, { limit: 1000 })
+    if (theirReviews.some((r) => r.clientId === caller)) throw new Error("You already reviewed this contractor.")
+  }
+
+  const result = await client.models.Review.create({
+    id,
+    projectId: project?.id ?? null,
+    projectTitle: project?.title ?? null,
+    clientId: caller,
+    clientName: (await displayName(caller)).name,
+    contractorId,
+    rating,
+    reviewText,
+    verified: !!project,
+  })
+  if (result.errors?.some((e) => e.errorType?.includes("ConditionalCheckFailed"))) {
+    throw new Error(project ? "You already reviewed this project." : "You already reviewed this contractor.")
+  }
+  const review = unwrap(result, "Review")
+  await notify(
+    contractorId,
+    "New review",
+    `${review.clientName} left you a ${rating}-star review${project ? ` for "${project.title}"` : ""}.`,
+    `/contractors/${contractorId}`,
+  )
+  return review
+}
+
+// ---------------------------------------------------------------------------
 
 const operations: Record<Operation, (event: never) => Promise<unknown>> = {
   placeBid,
@@ -734,6 +795,7 @@ const operations: Record<Operation, (event: never) => Promise<unknown>> = {
   proposeChangeOrder,
   respondToChangeOrder,
   startConversation,
+  submitReview,
 }
 
 export const handler = async (event: { fieldName?: string; info?: { fieldName?: string } }) => {

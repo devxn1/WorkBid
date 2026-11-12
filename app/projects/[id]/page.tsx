@@ -342,12 +342,14 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                     </Button>
                   )}
                   {project.status === "completed" &&
+                    project.awardedContractorId &&
                     (hasReview ? (
                       <div className="rounded-lg bg-success/10 p-3 text-center text-sm font-medium text-foreground">
                         Review submitted
                       </div>
                     ) : (
                       <ReviewDialog
+                        contractorId={project.awardedContractorId}
                         project={project}
                         trigger={<Button className="w-full">Leave a review</Button>}
                       />

@@ -1,9 +1,9 @@
 "use client"
 
-import { use } from "react"
+import { use, useEffect, useState } from "react"
 import Link from "next/link"
 import { notFound, useRouter } from "next/navigation"
-import { ArrowLeft, Award, BadgeCheck, Briefcase, Calendar, MapPin, MessageSquare } from "lucide-react"
+import { ArrowLeft, Award, BadgeCheck, Briefcase, Calendar, MapPin, MessageSquare, Star } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -12,17 +12,42 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { StarRating } from "@/components/shared/star-rating"
 import { ProjectImage } from "@/components/shared/project-image"
+import { ReviewDialog } from "@/components/shared/review-dialog"
 import { formatDate, initials } from "@/lib/format"
 
 export default function ContractorProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
-  const { getContractor, getReviewsForContractor, projects } = useMarketplace()
+  const { authUser, getContractor, requestContractor, contractorStatus, getReviewsForContractor, projects } =
+    useMarketplace()
+  const [verifiedOnly, setVerifiedOnly] = useState(false)
+
+  useEffect(() => requestContractor(id), [id, requestContractor])
 
   const contractor = getContractor(id)
-  if (!contractor) return notFound()
+  if (!contractor) {
+    if (contractorStatus(id) === "loading") {
+      return <p className="py-24 text-center text-sm text-muted-foreground">Loading…</p>
+    }
+    return notFound()
+  }
 
-  const contractorReviews = getReviewsForContractor(id)
+  const allReviews = getReviewsForContractor(id)
+  const verifiedCount = allReviews.filter((r) => r.verified).length
+  const contractorReviews = verifiedOnly ? allReviews.filter((r) => r.verified) : allReviews
+
+  // What the signed-in client can review: a completed project where they hired this
+  // contractor (verified), otherwise one unverified review if they haven't left any.
+  const isClient = authUser?.userType === "client"
+  const myReviews = allReviews.filter((r) => r.clientId === authUser?.userId)
+  const projectToReview = projects.find(
+    (p) =>
+      p.clientId === authUser?.userId &&
+      p.awardedContractorId === id &&
+      p.status === "completed" &&
+      !myReviews.some((r) => r.projectId === p.projectId),
+  )
+  const canReview = isClient && (!!projectToReview || myReviews.length === 0)
   const completedForContractor = projects.filter(
     (p) => p.awardedContractorId === id && p.status === "completed",
   )
@@ -106,11 +131,35 @@ export default function ContractorProfilePage({ params }: { params: Promise<{ id
 
           {/* Reviews */}
           <section className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-heading text-lg font-semibold text-foreground">
-                Reviews <span className="text-muted-foreground">({contractorReviews.length})</span>
+                Reviews <span className="text-muted-foreground">({allReviews.length})</span>
               </h2>
+              {canReview && (
+                <ReviewDialog
+                  contractorId={id}
+                  project={projectToReview}
+                  trigger={
+                    <Button size="sm" variant="outline">
+                      <Star data-icon="inline-start" />
+                      Write a review
+                    </Button>
+                  }
+                />
+              )}
             </div>
+
+            {allReviews.length > 0 && (
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Filter reviews">
+                <Button size="sm" variant={verifiedOnly ? "ghost" : "secondary"} onClick={() => setVerifiedOnly(false)}>
+                  All ({allReviews.length})
+                </Button>
+                <Button size="sm" variant={verifiedOnly ? "secondary" : "ghost"} onClick={() => setVerifiedOnly(true)}>
+                  <BadgeCheck data-icon="inline-start" />
+                  Verified hires ({verifiedCount})
+                </Button>
+              </div>
+            )}
 
             {contractorReviews.length > 0 && (
               <div className="flex flex-col gap-1.5 rounded-lg border border-border p-4">
@@ -133,7 +182,9 @@ export default function ContractorProfilePage({ params }: { params: Promise<{ id
 
             <div className="flex flex-col gap-3">
               {contractorReviews.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No reviews yet.</p>
+                <p className="text-sm text-muted-foreground">
+                  {verifiedOnly ? "No reviews from verified hires yet." : "No reviews yet."}
+                </p>
               ) : (
                 contractorReviews.map((review) => (
                   <Card key={review.reviewId}>
@@ -145,7 +196,16 @@ export default function ContractorProfilePage({ params }: { params: Promise<{ id
                         </div>
                         <span className="text-xs text-muted-foreground">{formatDate(review.createdAt)}</span>
                       </div>
-                      <p className="text-xs font-medium text-muted-foreground">{review.projectTitle}</p>
+                      {review.verified ? (
+                        <p className="flex items-center gap-1 text-xs font-medium text-success">
+                          <BadgeCheck width={14} height={14} aria-hidden="true" />
+                          Verified hire{review.projectTitle ? ` · ${review.projectTitle}` : ""}
+                        </p>
+                      ) : (
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Unverified · didn&apos;t hire through WorkBid
+                        </p>
+                      )}
                       <p className="text-sm text-muted-foreground text-pretty">{review.reviewText}</p>
                     </CardContent>
                   </Card>

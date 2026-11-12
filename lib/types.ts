@@ -140,13 +140,16 @@ export interface Contractor {
 
 export interface Review {
   reviewId: string
-  projectId: string
-  projectTitle: string
+  /** Set on verified reviews: the completed project the client hired this contractor for. */
+  projectId?: string
+  projectTitle?: string
   clientId: string
   clientName: string
   contractorId: string
   rating: number
   reviewText: string
+  /** True when the client hired the contractor through WorkBid and the project was completed. */
+  verified: boolean
   createdAt: string
 }
 
