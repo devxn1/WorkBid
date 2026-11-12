@@ -12,6 +12,7 @@ import { UserMenu } from "./user-menu"
 const clientNav = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/projects", label: "Browse Projects" },
+  { href: "/contractors", label: "Find Contractors" },
   { href: "/post-project", label: "Post a Project" },
   { href: "/messages", label: "Messages" },
 ]

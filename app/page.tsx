@@ -158,7 +158,7 @@ export default function HomePage() {
               <h2 className="font-heading text-2xl font-bold text-foreground">Top-rated contractors</h2>
               <p className="text-muted-foreground">Highly reviewed pros ready for your project.</p>
             </div>
-            <Button variant="ghost" render={<Link href="/projects" />}>
+            <Button variant="ghost" render={<Link href="/contractors" />}>
               View all
               <ArrowRight data-icon="inline-end" />
             </Button>

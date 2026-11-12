@@ -59,7 +59,9 @@ interface MarketplaceContextValue {
   bids: Bid[]
   /** True until your bids have been loaded (after sign-in). */
   bidsLoading: boolean
+  /** Every contractor with a business profile, plus the demo contractors. */
   contractors: Contractor[]
+  contractorsLoading: boolean
   reviews: Review[]
   conversations: Conversation[]
   messages: Message[]
@@ -222,6 +224,29 @@ function toReview(row: ReviewRow): Review {
 
 /** Contractor details loaded from the database (profile fields only; stats are calculated). */
 type ContractorInfo = Omit<Contractor, "rating" | "reviewCount" | "completedProjects">
+
+type ContractorProfileRow = Schema["ContractorProfile"]["type"]
+type UserProfileRow = Schema["UserProfile"]["type"]
+
+/** Builds a contractor's details from their business profile and (if readable) their account. */
+function toContractorInfo(id: string, cp: ContractorProfileRow | null, user: UserProfileRow | null): ContractorInfo {
+  const personName = user ? `${user.firstName} ${user.lastName}`.trim() : ""
+  return {
+    contractorId: id,
+    userId: id,
+    businessName: cp?.businessName || personName || "Contractor",
+    contractorName: cp?.contractorName || personName || "Contractor",
+    licenseNumber: cp?.licenseNumber ?? "",
+    yearsExperience: cp?.yearsExperience ?? 0,
+    location: cp?.location ?? "",
+    specialty: cp?.specialty ?? "",
+    verified: false,
+    avatar: cp?.avatar ?? user?.avatar ?? "",
+    about: cp?.about ?? "",
+    skills: (cp?.skills ?? []).filter((x): x is string => !!x),
+    services: (cp?.services ?? []).filter((x): x is string => !!x),
+  }
+}
 
 /** Converts a database Project row into the shape the pages use. */
 function toProject(row: ProjectRow): Project {
@@ -445,25 +470,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
         ])
         // Neither a business profile nor a contractor account: not a contractor.
         if (!cp && user?.userType !== "contractor") return [id, null]
-        const personName = user ? `${user.firstName} ${user.lastName}`.trim() : ""
-        return [
-          id,
-          {
-            contractorId: id,
-            userId: id,
-            businessName: cp?.businessName || personName || "Contractor",
-            contractorName: cp?.contractorName || personName || "Contractor",
-            licenseNumber: cp?.licenseNumber ?? "",
-            yearsExperience: cp?.yearsExperience ?? 0,
-            location: cp?.location ?? "",
-            specialty: cp?.specialty ?? "",
-            verified: false,
-            avatar: cp?.avatar ?? user?.avatar ?? "",
-            about: cp?.about ?? "",
-            skills: (cp?.skills ?? []).filter((x): x is string => !!x),
-            services: (cp?.services ?? []).filter((x): x is string => !!x),
-          },
-        ]
+        return [id, toContractorInfo(id, cp, user)]
       }),
     )
       .then((entries) => setContractorInfo((prev) => ({ ...prev, ...Object.fromEntries(entries) })))
@@ -472,6 +479,27 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
         console.error("Failed to load contractor info", err)
       })
   }, [bids, projects, authUser, signedInUserId, wantedContractors])
+
+  // Every contractor with a business profile, for browsing (profiles are public).
+  const [contractorsLoading, setContractorsLoading] = useState(true)
+  useEffect(() => {
+    if (authLoading) return
+    const client = generateClient<Schema>()
+    const authMode = signedInUserId ? "userPool" : "identityPool"
+    listAll((nextToken) => client.models.ContractorProfile.list({ authMode, limit: 100, nextToken }))
+      .then((rows) => {
+        rows.forEach((cp) => requestedContractors.current.add(cp.contractorId))
+        setContractorInfo((prev) => ({
+          ...prev,
+          ...Object.fromEntries(
+            // Keep details already loaded with the account (they include the person's name).
+            rows.map((cp) => [cp.contractorId, prev[cp.contractorId] ?? toContractorInfo(cp.contractorId, cp, null)]),
+          ),
+        }))
+      })
+      .catch((err) => console.error("Failed to load contractors", err))
+      .finally(() => setContractorsLoading(false))
+  }, [authLoading, signedInUserId])
 
   const requestContractor = useCallback((id: string) => {
     setWantedContractors((prev) => (prev.includes(id) ? prev : [...prev, id]))
@@ -613,6 +641,15 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       }
     },
     [contractorInfo, reviews, projects],
+  )
+  const contractors = useMemo(
+    () => [
+      ...Object.keys(contractorInfo)
+        .map(getContractor)
+        .filter((c): c is Contractor => !!c),
+      ...seedContractors.map((c) => getContractor(c.contractorId) ?? c),
+    ],
+    [contractorInfo, getContractor],
   )
   const getProject = useCallback((id: string) => projects.find((p) => p.projectId === id), [projects])
   const getBidsForProject = useCallback((projectId: string) => bids.filter((b) => b.projectId === projectId), [bids])
@@ -847,7 +884,8 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       projectsLoading,
       bids,
       bidsLoading,
-      contractors: seedContractors,
+      contractors,
+      contractorsLoading,
       reviews,
       conversations,
       messages,
@@ -886,6 +924,8 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       projectsLoading,
       bids,
       bidsLoading,
+      contractors,
+      contractorsLoading,
       reviews,
       conversations,
       messages,
