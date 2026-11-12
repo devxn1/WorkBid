@@ -138,6 +138,20 @@ export interface Contractor {
   completedProjects: number
 }
 
+/** A past job on a contractor's profile (they add these themselves). */
+export interface PortfolioItem {
+  itemId: string
+  contractorId: string
+  title: string
+  description?: string
+  location?: string
+  /** YYYY-MM-DD */
+  completedOn?: string
+  /** S3 paths, first one is the cover. */
+  images: string[]
+  createdAt: string
+}
+
 export interface Review {
   reviewId: string
   /** Set on verified reviews: the completed project the client hired this contractor for. */

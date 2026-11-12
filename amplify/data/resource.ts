@@ -92,6 +92,27 @@ const schema = a
       allow.guest().to(["read"]),
     ]),
 
+  // A past job a contractor shows on their profile (work done outside WorkBid too).
+  // Completed WorkBid projects are shown next to these automatically.
+  PortfolioItem: a
+    .model({
+      contractorId: a.id().required(),
+      title: a.string().required(),
+      description: a.string(),
+      // e.g. "Decatur, GA"
+      location: a.string(),
+      // When the job was finished (YYYY-MM-DD).
+      completedOn: a.date(),
+      // S3 paths under portfolio-images/, first one is the cover.
+      images: a.string().array(),
+    })
+    .secondaryIndexes((index) => [index("contractorId")])
+    .authorization((allow) => [
+      allow.ownerDefinedIn("contractorId").identityClaim("sub"),
+      allow.authenticated().to(["read"]),
+      allow.guest().to(["read"]),
+    ]),
+
   Project: a
     .model({
       clientId: a.id().required(),

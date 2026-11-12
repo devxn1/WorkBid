@@ -11,8 +11,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { StarRating } from "@/components/shared/star-rating"
-import { ProjectImage } from "@/components/shared/project-image"
 import { ReviewDialog } from "@/components/shared/review-dialog"
+import { PreviousWork } from "@/components/contractors/previous-work"
 import { formatDate, initials } from "@/lib/format"
 
 export default function ContractorProfilePage({ params }: { params: Promise<{ id: string }> }) {
@@ -126,6 +126,15 @@ export default function ContractorProfilePage({ params }: { params: Promise<{ id
               ))}
             </div>
           </section>
+
+          <Separator />
+
+          <PreviousWork
+            contractorId={id}
+            signedIn={!!authUser}
+            completedProjects={completedForContractor}
+            reviews={allReviews}
+          />
 
           <Separator />
 
@@ -257,30 +266,6 @@ export default function ContractorProfilePage({ params }: { params: Promise<{ id
               </div>
             </CardContent>
           </Card>
-
-          {completedForContractor.length > 0 && (
-            <Card>
-              <CardContent className="flex flex-col gap-3 p-5">
-                <h3 className="font-heading text-sm font-semibold text-foreground">Recent work</h3>
-                <div className="flex flex-col gap-2">
-                  {completedForContractor.slice(0, 3).map((p) => (
-                    <Link
-                      key={p.projectId}
-                      href={`/projects/${p.projectId}`}
-                      className="flex items-center gap-3 rounded-lg p-2 transition-colors hover:bg-muted"
-                    >
-                      <ProjectImage
-                        src={p.images[0]}
-                        alt=""
-                        className="size-12 shrink-0 rounded-md object-cover"
-                      />
-                      <span className="truncate text-sm text-foreground">{p.title}</span>
-                    </Link>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </aside>
       </div>
     </div>

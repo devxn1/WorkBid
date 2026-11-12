@@ -1,9 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import Link from "next/link"
-import { uploadData } from "aws-amplify/storage"
-import { ImagePlus, X } from "lucide-react"
 import { categories } from "@/lib/mock-data"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldError } from "@/components/ui/field"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CategoryIcon } from "@/components/shared/category-icon"
-import { ProjectImage } from "@/components/shared/project-image"
+import { PhotoPicker, savedPhotos, uploadPhotos, type Photo } from "@/components/shared/photo-picker"
 
 // Stock photo per category, used when the client doesn't upload any. Keys match categoryId in lib/mock-data.ts.
 const categoryImages: Record<string, string> = {
@@ -48,24 +46,6 @@ export interface ProjectFormValues {
   images: string[]
 }
 
-const MAX_PHOTOS = 5
-const MAX_PHOTO_BYTES = 5 * 1024 * 1024
-const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"]
-
-/** A photo in the form: one already saved (S3 path) or a new file waiting to upload. */
-type Photo = { key: string; path: string } | { key: string; file: File; preview: string }
-
-/** Uploads a photo into the signed-in user's own folder and returns its S3 path. */
-async function uploadPhoto(file: File) {
-  const ext = file.type.split("/")[1] ?? "jpg"
-  const { path } = await uploadData({
-    path: ({ identityId }) => `project-images/${identityId}/${crypto.randomUUID()}.${ext}`,
-    data: file,
-    options: { contentType: file.type },
-  }).result
-  return path
-}
-
 interface ProjectFormProps {
   /** Starting values (for editing). Leave out for a blank form. */
   initialValues?: ProjectFormValues
@@ -93,11 +73,7 @@ export function ProjectForm({
   const [budgetMin, setBudgetMin] = useState(initialValues ? String(initialValues.budgetMin) : "")
   const [budgetMax, setBudgetMax] = useState(initialValues ? String(initialValues.budgetMax) : "")
   const [timeline, setTimeline] = useState(initialValues?.timeline ?? "")
-  const [photos, setPhotos] = useState<Photo[]>(
-    () => initialValues?.images.map((path) => ({ key: path, path })) ?? [],
-  )
-  const [photoError, setPhotoError] = useState("")
-  const fileInput = useRef<HTMLInputElement>(null)
+  const [photos, setPhotos] = useState<Photo[]>(() => savedPhotos(initialValues?.images ?? []))
   const [submitted, setSubmitted] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
@@ -105,44 +81,6 @@ export function ProjectForm({
   const min = Number(budgetMin)
   const max = Number(budgetMax)
   const budgetValid = min > 0 && max > 0 && max >= min
-
-  // Free the in-browser previews when the form goes away.
-  const photosRef = useRef(photos)
-  useEffect(() => {
-    photosRef.current = photos
-  }, [photos])
-  useEffect(
-    () => () => photosRef.current.forEach((p) => "preview" in p && URL.revokeObjectURL(p.preview)),
-    [],
-  )
-
-  function addPhotos(files: FileList | null) {
-    if (!files) return
-    setPhotoError("")
-    const added: Photo[] = []
-    for (const file of Array.from(files)) {
-      if (photos.length + added.length >= MAX_PHOTOS) {
-        setPhotoError(`You can add up to ${MAX_PHOTOS} photos.`)
-        break
-      }
-      if (!PHOTO_TYPES.includes(file.type)) {
-        setPhotoError(`${file.name} isn't a JPG, PNG or WebP image.`)
-        continue
-      }
-      if (file.size > MAX_PHOTO_BYTES) {
-        setPhotoError(`${file.name} is larger than 5 MB.`)
-        continue
-      }
-      added.push({ key: crypto.randomUUID(), file, preview: URL.createObjectURL(file) })
-    }
-    setPhotos((prev) => [...prev, ...added])
-  }
-
-  function removePhoto(key: string) {
-    const photo = photos.find((p) => p.key === key)
-    if (photo && "preview" in photo) URL.revokeObjectURL(photo.preview)
-    setPhotos((prev) => prev.filter((p) => p.key !== key))
-  }
 
   async function handleSubmit(e: React.SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -152,11 +90,7 @@ export function ProjectForm({
     setError("")
     setSaving(true)
     try {
-      // Upload new photos first (in order), keeping the ones already saved.
-      const images: string[] = []
-      for (const photo of photos) {
-        images.push("path" in photo ? photo.path : await uploadPhoto(photo.file))
-      }
+      const images = await uploadPhotos(photos, "project-images")
       await onSubmit({
         title: title.trim(),
         description: description.trim(),
@@ -277,55 +211,7 @@ export function ProjectForm({
           <FieldDescription>When you&apos;d like the work done. Contractors propose an exact start date in their bids.</FieldDescription>
         </Field>
 
-        <Field data-invalid={photoError ? true : undefined}>
-          <FieldLabel>Photos</FieldLabel>
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
-            {photos.map((photo, i) => (
-              <div key={photo.key} className="relative aspect-square overflow-hidden rounded-lg border border-border bg-muted">
-                <ProjectImage
-                  src={"path" in photo ? photo.path : photo.preview}
-                  alt={`Project photo ${i + 1}`}
-                  className="size-full object-cover"
-                />
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="secondary"
-                  className="absolute right-1 top-1 size-7"
-                  onClick={() => removePhoto(photo.key)}
-                  aria-label={`Remove photo ${i + 1}`}
-                >
-                  <X />
-                </Button>
-              </div>
-            ))}
-            {photos.length < MAX_PHOTOS && (
-              <button
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted-foreground transition-colors hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
-              >
-                <ImagePlus aria-hidden="true" />
-                Add photo
-              </button>
-            )}
-          </div>
-          <input
-            ref={fileInput}
-            type="file"
-            accept={PHOTO_TYPES.join(",")}
-            multiple
-            hidden
-            onChange={(e) => {
-              addPhotos(e.target.files)
-              e.target.value = "" // lets the same file be picked again after removing it
-            }}
-          />
-          <FieldDescription>
-            Optional. Up to {MAX_PHOTOS} JPG, PNG or WebP photos, 5 MB each. The first photo is the cover.
-          </FieldDescription>
-          {photoError && <FieldError>{photoError}</FieldError>}
-        </Field>
+        <PhotoPicker photos={photos} onChange={setPhotos} />
 
         {error && (
           <p role="alert" className="text-sm text-destructive">

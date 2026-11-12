@@ -408,6 +408,30 @@ async function run() {
   await as(winnerName)
   const reviewNotes = await call(client.models.Notification.listNotificationByUserId({ userId: ids[winnerName] }))
   check("the contractor was notified of the review", reviewNotes.data?.some((n) => n.title === "New review"))
+
+  section("11. Portfolio")
+  await as("contractor1")
+  const work = await expectOk(
+    "contractor adds previous work",
+    client.models.PortfolioItem.create({
+      contractorId: ids.contractor1,
+      title: "[workflow test] Deck rebuild",
+      completedOn: daysFromNow(-30),
+      images: [],
+    }),
+  )
+  await expectFail(
+    "contractor can't add work under someone else's name",
+    client.models.PortfolioItem.create({ contractorId: ids.contractor2 ?? "someone-else", title: "Not mine" }),
+  )
+  await as("contractor2")
+  await expectFail("another contractor can't edit it", client.models.PortfolioItem.update({ id: work.id, title: "Hijacked" }))
+  await expectFail("another contractor can't delete it", client.models.PortfolioItem.delete({ id: work.id }))
+  await as("client")
+  const seen = await call(client.models.PortfolioItem.listPortfolioItemByContractorId({ contractorId: ids.contractor1 }))
+  check("clients can see it", seen.data?.some((w) => w.id === work.id), seen.error)
+  await as("contractor1")
+  await expectOk("contractor deletes their own work", client.models.PortfolioItem.delete({ id: work.id }))
 }
 
 // Clients can't delete projects: the server-managed status fields block deletes, which also

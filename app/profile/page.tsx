@@ -8,6 +8,7 @@ import { toast } from "sonner"
 import type { Schema } from "@/amplify/data/resource"
 import { useMarketplace } from "@/lib/store"
 import { Skeleton } from "@/components/ui/skeleton"
+import { PortfolioManager } from "@/components/profile/portfolio-manager"
 import {
   ProfileForm,
   type ContractorProfileData,
@@ -122,28 +123,31 @@ export default function ProfilePage() {
       </header>
 
       {loaded ? (
-        // The form copies its props into state once, so only render it after the data has loaded.
-        <ProfileForm
-          userType={authUser.userType}
-          email={authUser.email}
-          profile={{ firstName: authUser.firstName, lastName: authUser.lastName, avatar: authUser.avatar }}
-          contractorProfile={
-            isContractor
-              ? (contractorProfile ?? {
-                  businessName: "",
-                  contractorName: `${authUser.firstName} ${authUser.lastName}`.trim(),
-                  skills: [],
-                  services: [],
-                })
-              : undefined
-          }
-          saving={saving}
-          error={error}
-          onSave={handleSave}
-          onAvatarChange={() =>
-            toast.info("Photo uploads are coming soon", { description: "Your new photo won't be saved yet." })
-          }
-        />
+        <>
+          {/* The form copies its props into state once, so only render it after the data has loaded. */}
+          <ProfileForm
+            userType={authUser.userType}
+            email={authUser.email}
+            profile={{ firstName: authUser.firstName, lastName: authUser.lastName, avatar: authUser.avatar }}
+            contractorProfile={
+              isContractor
+                ? (contractorProfile ?? {
+                    businessName: "",
+                    contractorName: `${authUser.firstName} ${authUser.lastName}`.trim(),
+                    skills: [],
+                    services: [],
+                  })
+                : undefined
+            }
+            saving={saving}
+            error={error}
+            onSave={handleSave}
+            onAvatarChange={() =>
+              toast.info("Photo uploads are coming soon", { description: "Your new photo won't be saved yet." })
+            }
+          />
+          {isContractor && <PortfolioManager contractorId={authUser.userId} />}
+        </>
       ) : (
         <div className="flex flex-col gap-6">
           <Skeleton className="h-28 w-full rounded-xl" />
