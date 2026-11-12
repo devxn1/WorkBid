@@ -1,7 +1,7 @@
 export type UserType = "client" | "contractor"
 
 /** "awarded" is shown as "Hired". */
-export type ProjectStatus = "open" | "awarded" | "in_progress" | "completed"
+export type ProjectStatus = "open" | "awarded" | "in_progress" | "completed" | "cancelled"
 
 /** "pending" is shown as "Submitted"; "closed" means another contractor was hired. */
 export type BidStatus = "pending" | "revision_requested" | "accepted" | "rejected" | "withdrawn" | "closed"

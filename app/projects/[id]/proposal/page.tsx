@@ -54,11 +54,13 @@ export default function ProposalPage({
     const reason =
       authUser?.userType !== "contractor"
         ? "Only contractor accounts can bid on projects."
-        : project.status !== "open"
-          ? "This project has hired a contractor and is no longer accepting bids."
-          : isRevision
-            ? "This bid can't be revised. It may have been accepted, declined or withdrawn."
-            : "You already have a bid on this project. Revise it instead."
+        : project.status === "cancelled"
+          ? "The client cancelled this project."
+          : project.status !== "open"
+            ? "This project has hired a contractor and is no longer accepting bids."
+            : isRevision
+              ? "This bid can't be revised. It may have been accepted, declined or withdrawn."
+              : "You already have a bid on this project. Revise it instead."
     return (
       <div className="mx-auto max-w-2xl px-4 py-16 text-center sm:px-6 lg:px-8">
         <h1 className="font-heading text-2xl font-bold text-foreground">Can&apos;t open this proposal</h1>

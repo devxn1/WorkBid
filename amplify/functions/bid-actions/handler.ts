@@ -29,6 +29,7 @@ type Operation =
   | "withdrawBid"
   | "confirmAgreement"
   | "completeProject"
+  | "cancelProject"
   | "proposeChangeOrder"
   | "respondToChangeOrder"
   | "startConversation"
@@ -298,6 +299,11 @@ async function loadBid(bidId: string, caller: string, who: "contractor" | "clien
   return { bid, project }
 }
 
+/** Why a project that isn't open can't take bid actions any more. */
+function notOpenReason(project: Project) {
+  return project.status === "cancelled" ? "This project was cancelled." : "This project has already hired a contractor."
+}
+
 function bidHref(bid: Bid) {
   return `/projects/${bid.projectId}/bids/${bid.id}`
 }
@@ -314,7 +320,7 @@ async function placeBid(event: Args<"placeBid">): Promise<Bid> {
   if (profile.userType !== "contractor") throw new Error("Only contractor accounts can place bids.")
 
   const project = unwrap(await client.models.Project.get({ id: projectId }), "Project")
-  if (project.status !== "open") throw new Error("This project is no longer accepting bids.")
+  if (project.status !== "open") throw new Error(notOpenReason(project))
   if (project.clientId === contractorId) throw new Error("You can't bid on your own project.")
 
   const terms = cleanProposal(input)
@@ -369,7 +375,7 @@ async function reviseBid(event: Args<"reviseBid">): Promise<Bid> {
   const { bidId, expectedVersion, changeSummary, ...input } = event.arguments
   const { bid, project } = await loadBid(bidId, caller, "contractor")
   if (!OPEN_BID_STATUSES.includes(bid.status!)) throw new Error(`This bid is ${bid.status}, so it can't be revised.`)
-  if (project.status !== "open") throw new Error("This project has already hired a contractor.")
+  if (project.status !== "open") throw new Error(notOpenReason(project))
 
   const terms = cleanProposal(input)
   const previous = await currentVersion(bid)
@@ -459,7 +465,7 @@ async function requestRevision(event: Args<"requestRevision">): Promise<Bid> {
   if (note.length > 2000) throw new Error("That note is too long (2000 characters max).")
 
   const { bid, project } = await loadBid(bidId, caller, "client")
-  if (project.status !== "open") throw new Error("This project has already hired a contractor.")
+  if (project.status !== "open") throw new Error(notOpenReason(project))
   if (!OPEN_BID_STATUSES.includes(bid.status!)) throw new Error(`This bid is ${bid.status}.`)
 
   const ok = await updateIf(
@@ -477,7 +483,7 @@ async function requestRevision(event: Args<"requestRevision">): Promise<Bid> {
 async function declineBid(event: Args<"declineBid">): Promise<Bid> {
   const caller = callerId(event)
   const { bid, project } = await loadBid(event.arguments.bidId, caller, "client")
-  if (project.status !== "open") throw new Error("This project has already hired a contractor.")
+  if (project.status !== "open") throw new Error(notOpenReason(project))
   if (!OPEN_BID_STATUSES.includes(bid.status!)) throw new Error(`This bid is already ${bid.status}.`)
 
   const ok = await updateIf("Bid", { id: bid.id, status: "rejected" }, statusIn(OPEN_BID_STATUSES))
@@ -516,7 +522,7 @@ async function confirmAgreement(event: Args<"confirmAgreement">): Promise<Agreem
   const { data: existing } = await client.models.Agreement.listAgreementByBidId({ bidId })
   if (existing.length) return existing[0]
 
-  if (project.status !== "open") throw new Error("This project has already hired a contractor.")
+  if (project.status !== "open") throw new Error(notOpenReason(project))
   if (!OPEN_BID_STATUSES.includes(bid.status!)) throw new Error(`This bid is ${bid.status}, so it can't be accepted.`)
 
   const version = await currentVersion(bid)
@@ -535,7 +541,7 @@ async function confirmAgreement(event: Args<"confirmAgreement">): Promise<Agreem
     { id: project.id, status: "awarded", awardedContractorId: bid.contractorId, startDate },
     { status: { eq: "open" } },
   )
-  if (!locked) throw new Error("This project has already hired a contractor.")
+  if (!locked) throw new Error("This project is no longer open. It may have hired someone or been cancelled.")
 
   const unlockProject = () =>
     updateIf(
@@ -631,6 +637,34 @@ async function completeProject(event: Args<"completeProject">): Promise<Project>
   if (project.awardedContractorId) {
     await notify(project.awardedContractorId, "Project completed", `The client marked "${project.title}" complete.`, `/projects/${project.id}`)
   }
+  return unwrap(await client.models.Project.get({ id: project.id }), "Project")
+}
+
+async function cancelProject(event: Args<"cancelProject">): Promise<Project> {
+  const caller = callerId(event)
+  const reason = event.arguments.reason?.trim() || ""
+  if (reason.length > 1000) throw new Error("That reason is too long (1000 characters max).")
+  const project = unwrap(await client.models.Project.get({ id: event.arguments.projectId }), "Project")
+  if (project.clientId !== caller) throw new Error("Only the client who posted this project can cancel it.")
+  // Conditional, so a cancel and a hire at the same moment can't both happen.
+  const ok = await updateIf("Project", { id: project.id, status: "cancelled" }, { status: { eq: "open" } })
+  if (!ok) throw new Error("Only a project that hasn't hired anyone can be cancelled.")
+
+  const { data: projectBids } = await client.models.Bid.listBidByProjectId({ projectId: project.id }, { limit: 1000 })
+  await Promise.all(
+    projectBids
+      .filter((b) => OPEN_BID_STATUSES.includes(b.status!))
+      .map(async (b) => {
+        if (await updateIf("Bid", { id: b.id, status: "closed" }, statusIn(OPEN_BID_STATUSES))) {
+          await notify(
+            b.contractorId,
+            "Project cancelled",
+            `The client cancelled "${project.title}"${reason ? `: ${reason}` : "."}`,
+            `/projects/${project.id}`,
+          )
+        }
+      }),
+  )
   return unwrap(await client.models.Project.get({ id: project.id }), "Project")
 }
 
@@ -792,6 +826,7 @@ const operations: Record<Operation, (event: never) => Promise<unknown>> = {
   withdrawBid,
   confirmAgreement,
   completeProject,
+  cancelProject,
   proposeChangeOrder,
   respondToChangeOrder,
   startConversation,

@@ -23,6 +23,7 @@ export default function ClientDashboardPage() {
 
   const active = myProjects.filter((p) => p.status === "open" || p.status === "awarded" || p.status === "in_progress")
   const completed = myProjects.filter((p) => p.status === "completed")
+  const cancelled = myProjects.filter((p) => p.status === "cancelled")
   const totalBids = myProjects.reduce((sum, p) => sum + getBidsForProject(p.projectId).length, 0)
 
   return (
@@ -51,6 +52,7 @@ export default function ClientDashboardPage() {
         <TabsList>
           <TabsTrigger value="active">Active ({active.length})</TabsTrigger>
           <TabsTrigger value="completed">Completed ({completed.length})</TabsTrigger>
+          {cancelled.length > 0 && <TabsTrigger value="cancelled">Cancelled ({cancelled.length})</TabsTrigger>}
         </TabsList>
         <TabsContent value="active" className="mt-4">
           <ProjectList
@@ -66,6 +68,14 @@ export default function ClientDashboardPage() {
             getBidCount={(id) => getBidsForProject(id).length}
             emptyTitle="No completed projects yet"
             emptyDesc="Completed projects will appear here."
+          />
+        </TabsContent>
+        <TabsContent value="cancelled" className="mt-4">
+          <ProjectList
+            projects={cancelled}
+            getBidCount={(id) => getBidsForProject(id).length}
+            emptyTitle="No cancelled projects"
+            emptyDesc="Projects you cancel will appear here."
           />
         </TabsContent>
       </Tabs>

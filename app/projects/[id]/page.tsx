@@ -4,7 +4,7 @@ import { use, useState } from "react"
 import Link from "next/link"
 import { notFound, useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { ArrowLeft, CalendarClock, Clock, FileText, MapPin, MessageSquare, Pencil, Wallet } from "lucide-react"
+import { ArrowLeft, Ban, CalendarClock, Clock, FileText, MapPin, MessageSquare, Pencil, Wallet } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { categories } from "@/lib/mock-data"
 import { Button } from "@/components/ui/button"
@@ -16,6 +16,7 @@ import { BidCard } from "@/components/shared/bid-card"
 import { ReviewDialog } from "@/components/shared/review-dialog"
 import { ProjectImage } from "@/components/shared/project-image"
 import { AgreementPanel } from "@/components/proposals/agreement-panel"
+import { CancelProjectDialog } from "@/components/projects/cancel-project-dialog"
 import { bidStatusLabels, formatBudget, formatDate, isOpenBid, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -62,7 +63,8 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
   const isOpen = project.status === "open"
   // The client and the hired contractor share the agreement workspace once someone is hired.
   const isHiredContractor = !!authUser && project.awardedContractorId === authUser.userId
-  const showWorkspace = !isOpen && !!authUser && (isOwner || isHiredContractor)
+  const isCancelled = project.status === "cancelled"
+  const showWorkspace = !isOpen && !isCancelled && !!authUser && (isOwner || isHiredContractor)
   const hasReview = reviews.some((r) => r.projectId === project.projectId)
   const awardedContractor = project.awardedContractorId ? getContractor(project.awardedContractorId) : undefined
 
@@ -96,6 +98,16 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
         <ArrowLeft data-icon="inline-start" />
         Back to projects
       </Button>
+
+      {isCancelled && (
+        <div className="mb-6 flex gap-3 rounded-lg border border-border bg-muted p-4 text-sm">
+          <Ban className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <p className="text-foreground">
+            {isOwner ? "You cancelled this project." : "The client cancelled this project."} It&apos;s no longer
+            accepting bids.
+          </p>
+        </div>
+      )}
 
       <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-6">
@@ -273,7 +285,9 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                       </p>
                       <p className="text-muted-foreground">
                         {myBid.status === "closed"
-                          ? "This project hired another contractor."
+                          ? isCancelled
+                            ? "The client cancelled this project."
+                            : "This project hired another contractor."
                           : `Bid status: ${bidStatusLabels[myBid.status]}`}
                       </p>
                     </div>
@@ -324,6 +338,18 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                       <Pencil data-icon="inline-start" />
                       Edit project
                     </Button>
+                  )}
+                  {isOpen && (
+                    <CancelProjectDialog
+                      projectId={project.projectId}
+                      bidCount={projectBids.filter((b) => isOpenBid(b.status)).length}
+                      trigger={
+                        <Button variant="ghost" className="w-full text-destructive hover:text-destructive">
+                          <Ban data-icon="inline-start" />
+                          Cancel project
+                        </Button>
+                      }
+                    />
                   )}
                   {awardedContractor && (
                     <div className="rounded-lg bg-muted p-3 text-sm">

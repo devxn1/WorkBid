@@ -8,6 +8,7 @@ const styles: Record<ProjectStatus, string> = {
   awarded: "bg-warning/15 text-warning-foreground border-warning/30",
   in_progress: "bg-warning/15 text-warning-foreground border-warning/30",
   completed: "bg-success/10 text-success border-success/20",
+  cancelled: "bg-muted text-muted-foreground border-border",
 }
 
 export function StatusBadge({ status, className }: { status: ProjectStatus; className?: string }) {

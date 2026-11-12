@@ -342,7 +342,10 @@ async function run() {
   )
   await expectFail("a withdrawn bid can't be declined", client.mutations.declineBid({ bidId: bid3.id }))
   await as("contractor2")
-  await expectOk("contractor 2 can bid again after withdrawing", client.mutations.placeBid({ projectId: project2.id, ...proposal(850) }))
+  const bid4 = await expectOk(
+    "contractor 2 can bid again after withdrawing",
+    client.mutations.placeBid({ projectId: project2.id, ...proposal(850) }),
+  )
 
   section("9. Completing")
   await as(winnerName)
@@ -432,6 +435,47 @@ async function run() {
   check("clients can see it", seen.data?.some((w) => w.id === work.id), seen.error)
   await as("contractor1")
   await expectOk("contractor deletes their own work", client.models.PortfolioItem.delete({ id: work.id }))
+
+  section("12. Cancelling")
+  await as("contractor2")
+  await expectFail(
+    "a contractor can't cancel the project",
+    client.mutations.cancelProject({ projectId: project2.id }),
+    /only the client/i,
+  )
+  await as("client")
+  await expectFail(
+    "a hired (now completed) project can't be cancelled",
+    client.mutations.cancelProject({ projectId: project.id }),
+    /hasn't hired anyone/i,
+  )
+  const cancelled = await expectOk(
+    "client cancels the second project",
+    client.mutations.cancelProject({ projectId: project2.id, reason: "Decided to wait until spring." }),
+  )
+  check("project is cancelled", cancelled?.status === "cancelled")
+  check("the open bid on it is closed", (await getBid(bid4?.id))?.status === "closed")
+  await expectFail(
+    "it can't be cancelled twice",
+    client.mutations.cancelProject({ projectId: project2.id }),
+    /hasn't hired anyone/i,
+  )
+  await expectFail(
+    "the client can't reopen it directly",
+    client.models.Project.update({ id: project2.id, status: "open" }),
+  )
+  await as("contractor1")
+  await expectFail(
+    "nobody can bid on a cancelled project",
+    client.mutations.placeBid({ projectId: project2.id, ...proposal(700) }),
+    /cancelled/i,
+  )
+  await as("contractor2")
+  const cancelNotes = await call(client.models.Notification.listNotificationByUserId({ userId: ids.contractor2 }))
+  check(
+    "the bidder was notified with the reason",
+    cancelNotes.data?.some((n) => n.title === "Project cancelled" && /until spring/.test(n.body)),
+  )
 }
 
 // Clients can't delete projects: the server-managed status fields block deletes, which also

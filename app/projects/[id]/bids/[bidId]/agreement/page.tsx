@@ -46,9 +46,15 @@ export default function ReviewAgreementPage({ params }: { params: Promise<{ id: 
     )
   }
   if (project.status !== "open" || !isOpenBid(bid.status)) {
+    const why =
+      project.status === "cancelled"
+        ? ": the project was cancelled"
+        : project.status !== "open"
+          ? ": the project already hired a contractor"
+          : ""
     return (
       <Centered>
-        This bid can&apos;t be accepted any more{project.status !== "open" ? ": the project already hired a contractor" : ""}.{" "}
+        This bid can&apos;t be accepted any more{why}.{" "}
         <Link href={`/projects/${id}`} className="underline">
           Back to project
         </Link>

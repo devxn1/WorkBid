@@ -51,6 +51,7 @@ export const statusLabels: Record<ProjectStatus, string> = {
   awarded: "Hired",
   in_progress: "In progress",
   completed: "Completed",
+  cancelled: "Cancelled",
 }
 
 export const bidStatusLabels: Record<BidStatus, string> = {
@@ -82,4 +83,5 @@ export const statusVariants: Record<ProjectStatus, "default" | "secondary" | "ou
   awarded: "secondary",
   in_progress: "secondary",
   completed: "outline",
+  cancelled: "outline",
 }

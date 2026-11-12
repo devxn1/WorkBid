@@ -45,7 +45,8 @@ const schema = a
   .schema({
   UserType: a.enum(["client", "contractor"]),
   // "awarded" is shown as "Hired": a contractor's agreement was confirmed.
-  ProjectStatus: a.enum(["open", "awarded", "in_progress", "completed"]),
+  // "cancelled": the client called it off before hiring anyone.
+  ProjectStatus: a.enum(["open", "awarded", "in_progress", "completed", "cancelled"]),
   // "pending" is shown as "Submitted". "closed" = another contractor was hired.
   BidStatus: a.enum(["pending", "revision_requested", "accepted", "rejected", "withdrawn", "closed"]),
   BidVersionStatus: a.enum(["active", "superseded", "accepted"]),
@@ -304,6 +305,14 @@ const schema = a
     .mutation()
     .arguments({ bidId: a.id().required(), bidVersionId: a.id().required() })
     .returns(a.ref("Agreement"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(bidActions)),
+
+  // Client cancels a project that hasn't hired anyone yet. Every open bid is closed.
+  cancelProject: a
+    .mutation()
+    .arguments({ projectId: a.id().required(), reason: a.string() })
+    .returns(a.ref("Project"))
     .authorization((allow) => [allow.authenticated()])
     .handler(a.handler.function(bidActions)),
 

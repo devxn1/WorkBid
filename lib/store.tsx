@@ -82,6 +82,8 @@ interface MarketplaceContextValue {
   /** Client: confirms the bid's current version (`bidVersionId`) and hires the contractor. */
   confirmAgreement: (bidId: string, bidVersionId: string) => Promise<void>
   completeProject: (projectId: string) => Promise<void>
+  /** Client: cancels an open project and closes its bids. Throws with a readable message on failure. */
+  cancelProject: (projectId: string, reason: string) => Promise<void>
   /**
    * Client: reviews a contractor. Pass the completed project you hired them for to make it
    * a verified review. Throws with a readable message on failure.
@@ -759,6 +761,25 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     toast.success("Project marked complete", { description: "You can now leave a review for the contractor." })
   }, [])
 
+  const cancelProject = useCallback(async (projectId: string, reason: string) => {
+    const client = generateClient<Schema>()
+    const project = orThrow(
+      await client.mutations.cancelProject({ projectId, reason: reason || null }),
+      "Couldn't cancel the project.",
+    )
+    const updated = toProject(project)
+    setProjects((prev) => prev.map((p) => (p.projectId === projectId ? updated : p)))
+    // The server closed every open bid; match that here.
+    setBids((prev) =>
+      prev.map((b) =>
+        b.projectId === projectId && (b.status === "pending" || b.status === "revision_requested")
+          ? { ...b, status: "closed" }
+          : b,
+      ),
+    )
+    toast.success("Project cancelled", { description: "Contractors who bid have been notified." })
+  }, [])
+
   const submitReview = useCallback(
     async (contractorId: string, rating: number, reviewText: string, projectId?: string) => {
       const client = generateClient<Schema>()
@@ -841,6 +862,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       declineBid,
       confirmAgreement,
       completeProject,
+      cancelProject,
       submitReview,
       sendMessage,
       startConversation,
@@ -878,6 +900,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       declineBid,
       confirmAgreement,
       completeProject,
+      cancelProject,
       submitReview,
       sendMessage,
       startConversation,
