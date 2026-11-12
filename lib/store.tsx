@@ -22,6 +22,7 @@ import type {
   Conversation,
   Message,
   Project,
+  QuoteRequest,
   Review,
   User,
   UserType,
@@ -36,10 +37,12 @@ interface NewProjectInput {
   budgetMax: number
   timeline: string | null
   images: string[]
+  /** Makes it a private quote request for this contractor (they're sent the request too). */
+  invitedContractorId?: string
 }
 
 /** Project fields the owner can change while the project is open. */
-type ProjectDetailsInput = Omit<NewProjectInput, "images"> & { images?: string[] }
+type ProjectDetailsInput = Omit<NewProjectInput, "images" | "invitedContractorId"> & { images?: string[] }
 
 interface MarketplaceContextValue {
   /** The real signed-in user (null when signed out). */
@@ -63,6 +66,8 @@ interface MarketplaceContextValue {
   contractors: Contractor[]
   contractorsLoading: boolean
   reviews: Review[]
+  /** Quote requests you sent (clients) or received (contractors). */
+  quoteRequests: QuoteRequest[]
   conversations: Conversation[]
   messages: Message[]
   notifications: AppNotification[]
@@ -96,6 +101,10 @@ interface MarketplaceContextValue {
   /** Opens (or finds) the conversation for a project and contractor; returns its id. Throws on failure. */
   startConversation: (projectId: string, contractorId: string) => Promise<string>
   markNotificationsRead: () => void
+  /** Client: asks a contractor to bid on one of your open projects. Throws with a readable message on failure. */
+  requestQuote: (projectId: string, contractorId: string, message: string) => Promise<void>
+  /** Contractor: turns down a quote request. Throws with a readable message on failure. */
+  declineQuoteRequest: (quoteRequestId: string) => Promise<void>
   // helpers
   getContractor: (id: string) => Contractor | undefined
   /** Loads a contractor's details if they aren't loaded yet (e.g. opening their profile page). */
@@ -117,6 +126,21 @@ type ConversationRow = Schema["Conversation"]["type"]
 type MessageRow = Schema["Message"]["type"]
 type NotificationRow = Schema["Notification"]["type"]
 type ReviewRow = Schema["Review"]["type"]
+type QuoteRequestRow = Schema["QuoteRequest"]["type"]
+
+function toQuoteRequest(row: QuoteRequestRow): QuoteRequest {
+  return {
+    quoteRequestId: row.id,
+    projectId: row.projectId,
+    projectTitle: row.projectTitle,
+    clientId: row.clientId,
+    clientName: row.clientName,
+    contractorId: row.contractorId,
+    message: row.message ?? undefined,
+    status: row.status ?? "pending",
+    createdAt: row.createdAt,
+  }
+}
 
 function toNotification(row: NotificationRow): AppNotification {
   return {
@@ -267,6 +291,7 @@ function toProject(row: ProjectRow): Project {
     completionDate: row.completionDate ?? undefined,
     images: (row.images ?? []).filter((i): i is string => !!i),
     awardedContractorId: row.awardedContractorId ?? undefined,
+    invitedContractorId: row.invitedContractorId ?? undefined,
   }
 }
 
@@ -287,6 +312,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
   // Contractors a page asked for directly (see requestContractor).
   const [wantedContractors, setWantedContractors] = useState<string[]>([])
   const [reviews, setReviews] = useState<Review[]>(seedReviews)
+  const [quoteRequests, setQuoteRequests] = useState<QuoteRequest[]>([])
   const [conversationRows, setConversationRows] = useState<ConversationInfo[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [notifications, setNotifications] = useState<AppNotification[]>([])
@@ -685,11 +711,21 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
         timeline: input.timeline,
         status: "open",
         images: input.images.length ? input.images : ["/images/projects/painting.png"],
+        invitedContractorId: input.invitedContractorId ?? null,
       })
       if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't post the project.")
       const project = toProject(data)
       setProjects((prev) => [project, ...prev])
-      toast.success("Project posted", { description: `“${input.title}” is now live for contractors to bid on.` })
+      if (input.invitedContractorId) {
+        const request = orThrow(
+          await client.mutations.requestQuote({ projectId: project.projectId, contractorId: input.invitedContractorId }),
+          "The project was saved, but the quote request couldn't be sent.",
+        )
+        setQuoteRequests((prev) => [toQuoteRequest(request), ...prev])
+        toast.success("Quote request sent", { description: "Only this contractor can see and bid on it." })
+      } else {
+        toast.success("Project posted", { description: `“${input.title}” is now live for contractors to bid on.` })
+      }
       return project
     },
     [authUser],
@@ -798,6 +834,42 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
     toast.success("Project marked complete", { description: "You can now leave a review for the contractor." })
   }, [])
 
+  // Quote requests you're part of: clients see the ones they sent, contractors the ones they got.
+  useEffect(() => {
+    if (!signedInUserId || !signedInUserType) {
+      setQuoteRequests([])
+      return
+    }
+    const client = generateClient<Schema>()
+    listAll((nextToken) =>
+      signedInUserType === "client"
+        ? client.models.QuoteRequest.listQuoteRequestByClientId({ clientId: signedInUserId }, { limit: 100, nextToken })
+        : client.models.QuoteRequest.listQuoteRequestByContractorId(
+            { contractorId: signedInUserId },
+            { limit: 100, nextToken },
+          ),
+    )
+      .then((rows) => setQuoteRequests(rows.map(toQuoteRequest).sort((a, b) => b.createdAt.localeCompare(a.createdAt))))
+      .catch((err) => console.error("Failed to load quote requests", err))
+  }, [signedInUserId, signedInUserType])
+
+  const requestQuote = useCallback(async (projectId: string, contractorId: string, message: string) => {
+    const client = generateClient<Schema>()
+    const row = orThrow(
+      await client.mutations.requestQuote({ projectId, contractorId, message: message || null }),
+      "Couldn't send the quote request.",
+    )
+    setQuoteRequests((prev) => [toQuoteRequest(row), ...prev])
+    toast.success("Quote request sent", { description: "The contractor has been notified." })
+  }, [])
+
+  const declineQuoteRequest = useCallback(async (quoteRequestId: string) => {
+    const client = generateClient<Schema>()
+    const row = orThrow(await client.mutations.declineQuoteRequest({ quoteRequestId }), "Couldn't decline the request.")
+    const updated = toQuoteRequest(row)
+    setQuoteRequests((prev) => prev.map((q) => (q.quoteRequestId === quoteRequestId ? updated : q)))
+  }, [])
+
   const cancelProject = useCallback(async (projectId: string, reason: string) => {
     const client = generateClient<Schema>()
     const project = orThrow(
@@ -887,6 +959,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       contractors,
       contractorsLoading,
       reviews,
+      quoteRequests,
       conversations,
       messages,
       notifications,
@@ -905,6 +978,8 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       sendMessage,
       startConversation,
       markNotificationsRead,
+      requestQuote,
+      declineQuoteRequest,
       getContractor,
       requestContractor,
       contractorStatus,
@@ -927,6 +1002,7 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       contractors,
       contractorsLoading,
       reviews,
+      quoteRequests,
       conversations,
       messages,
       notifications,
@@ -945,6 +1021,8 @@ export function MarketplaceProvider({ children }: { children: React.ReactNode })
       sendMessage,
       startConversation,
       markNotificationsRead,
+      requestQuote,
+      declineQuoteRequest,
       getContractor,
       requestContractor,
       contractorStatus,

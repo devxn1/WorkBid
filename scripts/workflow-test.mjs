@@ -476,6 +476,94 @@ async function run() {
     "the bidder was notified with the reason",
     cancelNotes.data?.some((n) => n.title === "Project cancelled" && /until spring/.test(n.body)),
   )
+
+  section("13. Quote requests")
+  await as("client")
+  const newProject = (title, extra = {}) =>
+    client.models.Project.create({
+      clientId: ids.client,
+      clientName: "Workflow Test Client",
+      categoryId: "general",
+      title: `[workflow test] ${title}`,
+      description: "Test project created by workflow-test.mjs.",
+      location: "Test City",
+      budgetMin: 500,
+      budgetMax: 1500,
+      status: "open",
+      ...extra,
+    })
+  const privateProject = await expectOk(
+    "client posts a private request for contractor 1",
+    newProject("Private gutter repair", { invitedContractorId: ids.contractor1 }),
+  )
+  createdProjects.push(privateProject.id)
+  await expectFail(
+    "it can't be sent to a different contractor",
+    client.mutations.requestQuote({ projectId: privateProject.id, contractorId: ids.contractor2 }),
+    /another contractor/i,
+  )
+  const privateQuote = await expectOk(
+    "the quote request is sent to contractor 1",
+    client.mutations.requestQuote({ projectId: privateProject.id, contractorId: ids.contractor1 }),
+  )
+  check("…and it's pending", privateQuote?.status === "pending")
+  await expectFail(
+    "the same contractor can't be asked twice",
+    client.mutations.requestQuote({ projectId: privateProject.id, contractorId: ids.contractor1 }),
+    /already asked/i,
+  )
+  await expectFail(
+    "the client can't change who a private request is for",
+    client.models.Project.update({ id: privateProject.id, invitedContractorId: ids.contractor2 }),
+  )
+
+  await as("contractor2")
+  await expectFail(
+    "another contractor can't bid on a private request",
+    client.mutations.placeBid({ projectId: privateProject.id, ...proposal(800) }),
+    /private quote request/i,
+  )
+  const peekQuote = await call(client.models.QuoteRequest.get({ id: privateQuote?.id ?? "none" }))
+  check("another contractor can't read the request", !peekQuote.data)
+  await expectFail(
+    "a contractor can't send quote requests",
+    client.mutations.requestQuote({ projectId: privateProject.id, contractorId: ids.contractor2 }),
+    /your own projects/i,
+  )
+
+  await as("contractor1")
+  const c1Notes = await call(client.models.Notification.listNotificationByUserId({ userId: ids.contractor1 }))
+  check("contractor 1 was notified", c1Notes.data?.some((n) => n.title === "Quote request" && /private/.test(n.body)))
+  await expectOk("contractor 1 bids on the private request", client.mutations.placeBid({ projectId: privateProject.id, ...proposal(950) }))
+  const answered = await call(client.models.QuoteRequest.get({ id: privateQuote?.id ?? "none" }))
+  check("the request is marked as answered with a bid", answered.data?.status === "bid", answered.error)
+
+  await as("client")
+  const publicProject = await expectOk("client posts a public project", newProject("Driveway sealing"))
+  createdProjects.push(publicProject.id)
+  const publicQuote = await expectOk(
+    "client invites contractor 2 to it",
+    client.mutations.requestQuote({ projectId: publicProject.id, contractorId: ids.contractor2, message: "Can you look at this?" }),
+  )
+  await as("contractor1")
+  await expectFail(
+    "only the invited contractor can decline it",
+    client.mutations.declineQuoteRequest({ quoteRequestId: publicQuote?.id ?? "none" }),
+  )
+  await as("contractor2")
+  const declined = await expectOk(
+    "contractor 2 declines the request",
+    client.mutations.declineQuoteRequest({ quoteRequestId: publicQuote?.id ?? "none" }),
+  )
+  check("…and it's declined", declined?.status === "declined")
+  await expectFail(
+    "it can't be answered twice",
+    client.mutations.declineQuoteRequest({ quoteRequestId: publicQuote?.id ?? "none" }),
+    /already answered/i,
+  )
+  await as("client")
+  const clientNotes = await call(client.models.Notification.listNotificationByUserId({ userId: ids.client }))
+  check("the client was told it was declined", clientNotes.data?.some((n) => n.title === "Quote request declined"))
 }
 
 // Clients can't delete projects: the server-managed status fields block deletes, which also

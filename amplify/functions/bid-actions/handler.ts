@@ -34,6 +34,8 @@ type Operation =
   | "respondToChangeOrder"
   | "startConversation"
   | "submitReview"
+  | "requestQuote"
+  | "declineQuoteRequest"
 /** The event a mutation's handler receives (its arguments plus the caller's identity). */
 type Args<K extends Operation> = Parameters<Schema[K]["functionHandler"]>[0]
 type Bid = Schema["Bid"]["type"]
@@ -44,6 +46,7 @@ type Agreement = Schema["Agreement"]["type"]
 type ChangeOrder = Schema["ChangeOrder"]["type"]
 type Conversation = Schema["Conversation"]["type"]
 type Review = Schema["Review"]["type"]
+type QuoteRequest = Schema["QuoteRequest"]["type"]
 
 /** Bids that are still in play: the client can accept, decline or ask for changes. */
 const OPEN_BID_STATUSES: BidStatus[] = ["pending", "revision_requested"]
@@ -322,6 +325,9 @@ async function placeBid(event: Args<"placeBid">): Promise<Bid> {
   const project = unwrap(await client.models.Project.get({ id: projectId }), "Project")
   if (project.status !== "open") throw new Error(notOpenReason(project))
   if (project.clientId === contractorId) throw new Error("You can't bid on your own project.")
+  if (project.invitedContractorId && project.invitedContractorId !== contractorId) {
+    throw new Error("This is a private quote request for another contractor.")
+  }
 
   const terms = cleanProposal(input)
 
@@ -367,6 +373,9 @@ async function placeBid(event: Args<"placeBid">): Promise<Bid> {
     `${contractor.businessName ?? contractor.name} bid ${money(terms.amount)} on "${project.title}".`,
     bidHref(bid),
   )
+  // Answers the client's quote request, if they sent one.
+  const { data: request } = await client.models.QuoteRequest.get({ id: quoteRequestId(projectId, contractorId) })
+  if (request?.status === "pending") await client.models.QuoteRequest.update({ id: request.id, status: "bid" })
   return withVersion
 }
 
@@ -817,6 +826,76 @@ async function submitReview(event: Args<"submitReview">): Promise<Review> {
 }
 
 // ---------------------------------------------------------------------------
+// Quote requests
+// ---------------------------------------------------------------------------
+
+/** One request per project and contractor: the id makes the database refuse a second one. */
+function quoteRequestId(projectId: string, contractorId: string) {
+  return `quote-${projectId}-${contractorId}`
+}
+
+async function requestQuote(event: Args<"requestQuote">): Promise<QuoteRequest> {
+  const caller = callerId(event)
+  const { projectId, contractorId } = event.arguments
+  const message = event.arguments.message?.trim() || null
+  if (message && message.length > 2000) throw new Error("That message is too long (2000 characters max).")
+
+  const project = unwrap(await client.models.Project.get({ id: projectId }), "Project")
+  if (project.clientId !== caller) throw new Error("You can only ask for quotes on your own projects.")
+  if (project.status !== "open") throw new Error(notOpenReason(project))
+  if (project.invitedContractorId && project.invitedContractorId !== contractorId) {
+    throw new Error("This private request is for another contractor.")
+  }
+  const { data: contractor } = await client.models.UserProfile.get({ userId: contractorId })
+  if (contractor?.userType !== "contractor") throw new Error("That contractor doesn't exist.")
+  const { data: projectBids } = await client.models.Bid.listBidByProjectId({ projectId }, { limit: 1000 })
+  if (projectBids.some((b) => b.contractorId === contractorId && b.status !== "withdrawn")) {
+    throw new Error("This contractor already bid on the project.")
+  }
+
+  const result = await client.models.QuoteRequest.create({
+    id: quoteRequestId(projectId, contractorId),
+    projectId,
+    projectTitle: project.title,
+    clientId: caller,
+    clientName: project.clientName,
+    contractorId,
+    message,
+    status: "pending",
+  })
+  if (result.errors?.some((e) => e.errorType?.includes("ConditionalCheckFailed"))) {
+    throw new Error("You already asked this contractor for a quote on this project.")
+  }
+  const request = unwrap(result, "Quote request")
+  await notify(
+    contractorId,
+    "Quote request",
+    `${project.clientName} ${project.invitedContractorId ? "sent you a private quote request" : "asked you for a quote"} on "${project.title}".`,
+    `/projects/${projectId}`,
+  )
+  return request
+}
+
+async function declineQuoteRequest(event: Args<"declineQuoteRequest">): Promise<QuoteRequest> {
+  const caller = callerId(event)
+  const request = unwrap(await client.models.QuoteRequest.get({ id: event.arguments.quoteRequestId }), "Quote request")
+  if (request.contractorId !== caller) throw new Error("Only the contractor who was asked can decline this.")
+  if (request.status !== "pending") throw new Error("You already answered this request.")
+  const updated = unwrap(
+    await client.models.QuoteRequest.update({ id: request.id, status: "declined" }),
+    "Quote request",
+  )
+  const contractor = await displayName(caller)
+  await notify(
+    request.clientId,
+    "Quote request declined",
+    `${contractor.businessName ?? contractor.name} can't take on "${request.projectTitle}".`,
+    `/projects/${request.projectId}`,
+  )
+  return updated
+}
+
+// ---------------------------------------------------------------------------
 
 const operations: Record<Operation, (event: never) => Promise<unknown>> = {
   placeBid,
@@ -831,6 +910,8 @@ const operations: Record<Operation, (event: never) => Promise<unknown>> = {
   respondToChangeOrder,
   startConversation,
   submitReview,
+  requestQuote,
+  declineQuoteRequest,
 }
 
 export const handler = async (event: { fieldName?: string; info?: { fieldName?: string } }) => {

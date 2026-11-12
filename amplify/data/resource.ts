@@ -51,6 +51,8 @@ const schema = a
   BidStatus: a.enum(["pending", "revision_requested", "accepted", "rejected", "withdrawn", "closed"]),
   BidVersionStatus: a.enum(["active", "superseded", "accepted"]),
   ChangeOrderStatus: a.enum(["proposed", "approved", "declined"]),
+  // "bid" = the contractor answered with a bid.
+  QuoteRequestStatus: a.enum(["pending", "bid", "declined"]),
 
   // One per signed-up user. userId = Cognito sub.
   // Email is not stored here: every signed-in user can read profiles, and Cognito
@@ -133,6 +135,9 @@ const schema = a
       startDate: a.datetime().authorization(serverManaged),
       completionDate: a.datetime().authorization(serverManaged),
       awardedContractorId: a.id().authorization(serverManaged),
+      // Set for a private quote request: only this contractor can bid, and the app keeps
+      // the project out of Browse. Chosen when posting and can't be changed afterwards.
+      invitedContractorId: a.id().authorization(serverManaged),
       images: a.string().array(),
       bids: a.hasMany("Bid", "projectId"),
     })
@@ -377,6 +382,40 @@ const schema = a
       reviewText: a.string().required(),
     })
     .returns(a.ref("Review"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(bidActions)),
+
+  // A client asking a contractor to bid on one of their projects (an open one, or a
+  // private request posted just for them). Created only by requestQuote.
+  QuoteRequest: a
+    .model({
+      projectId: a.id().required(),
+      projectTitle: a.string().required(),
+      clientId: a.id().required(),
+      clientName: a.string().required(),
+      contractorId: a.id().required(),
+      message: a.string(),
+      status: a.ref("QuoteRequestStatus").required(),
+    })
+    .secondaryIndexes((index) => [index("contractorId"), index("clientId")])
+    .authorization((allow) => [
+      allow.ownerDefinedIn("clientId").identityClaim("sub").to(["read"]),
+      allow.ownerDefinedIn("contractorId").identityClaim("sub").to(["read"]),
+    ]),
+
+  // Client asks a contractor for a quote on one of their open projects.
+  requestQuote: a
+    .mutation()
+    .arguments({ projectId: a.id().required(), contractorId: a.id().required(), message: a.string() })
+    .returns(a.ref("QuoteRequest"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(bidActions)),
+
+  // Contractor turns down a quote request.
+  declineQuoteRequest: a
+    .mutation()
+    .arguments({ quoteRequestId: a.id().required() })
+    .returns(a.ref("QuoteRequest"))
     .authorization((allow) => [allow.authenticated()])
     .handler(a.handler.function(bidActions)),
 

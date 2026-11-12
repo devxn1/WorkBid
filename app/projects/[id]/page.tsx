@@ -4,7 +4,7 @@ import { use, useState } from "react"
 import Link from "next/link"
 import { notFound, useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { ArrowLeft, Ban, CalendarClock, Clock, FileText, MapPin, MessageSquare, Pencil, Wallet } from "lucide-react"
+import { ArrowLeft, Ban, CalendarClock, Clock, FileText, Lock, MapPin, MessageSquare, Pencil, Wallet } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { categories } from "@/lib/mock-data"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,7 @@ import { ReviewDialog } from "@/components/shared/review-dialog"
 import { ProjectImage } from "@/components/shared/project-image"
 import { AgreementPanel } from "@/components/proposals/agreement-panel"
 import { CancelProjectDialog } from "@/components/projects/cancel-project-dialog"
+import { ConfirmActionDialog } from "@/components/proposals/bid-dialogs"
 import { bidStatusLabels, formatBudget, formatDate, isOpenBid, relativeTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -35,6 +36,8 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
     startConversation,
     completeProject,
     reviews,
+    quoteRequests,
+    declineQuoteRequest,
   } = useMarketplace()
   const [photoIndex, setPhotoIndex] = useState(0)
   const [openingChat, setOpeningChat] = useState(false)
@@ -64,6 +67,28 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
   // The client and the hired contractor share the agreement workspace once someone is hired.
   const isHiredContractor = !!authUser && project.awardedContractorId === authUser.userId
   const isCancelled = project.status === "cancelled"
+  // Private quote requests are only shown to the client and the contractor they're for.
+  const isPrivate = !!project.invitedContractorId
+  const isInvited = !!authUser && project.invitedContractorId === authUser.userId
+  if (isPrivate && !isOwner && !isInvited) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center sm:px-6 lg:px-8">
+        <Lock className="mx-auto size-8 text-muted-foreground" aria-hidden="true" />
+        <h1 className="mt-4 font-heading text-2xl font-bold text-foreground">This is a private quote request</h1>
+        <p className="mt-2 text-muted-foreground">Only the client and the contractor it was sent to can view it.</p>
+        <Button className="mt-6" render={<Link href="/projects" />}>
+          Browse projects
+        </Button>
+      </div>
+    )
+  }
+  const projectQuotes = quoteRequests.filter((q) => q.projectId === project.projectId)
+  // A contractor's own pending request for this project, while they can still bid.
+  const myQuote =
+    role === "contractor" && isOpen && !myBid
+      ? projectQuotes.find((q) => q.contractorId === authUser?.userId && q.status === "pending")
+      : undefined
+  const quoteStatusLabels = { pending: "Waiting", bid: "Sent a bid", declined: "Declined" }
   const showWorkspace = !isOpen && !isCancelled && !!authUser && (isOwner || isHiredContractor)
   const hasReview = reviews.some((r) => r.projectId === project.projectId)
   const awardedContractor = project.awardedContractorId ? getContractor(project.awardedContractorId) : undefined
@@ -105,6 +130,44 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
           <p className="text-foreground">
             {isOwner ? "You cancelled this project." : "The client cancelled this project."} It&apos;s no longer
             accepting bids.
+          </p>
+        </div>
+      )}
+
+      {myQuote && (
+        <div className="mb-6 flex flex-col gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4 text-sm sm:flex-row sm:items-start">
+          <FileText className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+          <div className="flex-1">
+            <p className="font-medium text-foreground">
+              {project.clientName} {isPrivate ? "sent you a private quote request" : "asked you for a quote"}
+            </p>
+            {myQuote.message && <p className="mt-1 whitespace-pre-line text-muted-foreground">{myQuote.message}</p>}
+          </div>
+          <ConfirmActionDialog
+            title="Decline this quote request?"
+            description="The client will be told you can't take this job."
+            confirmLabel="Decline request"
+            workingLabel="Declining…"
+            destructive
+            onConfirm={() => declineQuoteRequest(myQuote.quoteRequestId)}
+            trigger={
+              <Button size="sm" variant="outline" className="shrink-0">
+                Decline
+              </Button>
+            }
+          />
+        </div>
+      )}
+
+      {isPrivate && isOwner && (
+        <div className="mb-6 flex gap-3 rounded-lg border border-border bg-muted p-4 text-sm">
+          <Lock className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <p className="text-foreground">
+            Private request for{" "}
+            <Link href={`/contractors/${project.invitedContractorId}`} className="font-medium hover:underline">
+              {getContractor(project.invitedContractorId!)?.businessName ?? "your contractor"}
+            </Link>
+            . It isn&apos;t listed in Browse projects, and only they can bid.
           </p>
         </div>
       )}
@@ -350,6 +413,21 @@ export default function ProjectDetailsPage({ params }: { params: Promise<{ id: s
                         </Button>
                       }
                     />
+                  )}
+                  {projectQuotes.length > 0 && (
+                    <div className="rounded-lg border border-border p-3 text-sm">
+                      <p className="mb-2 text-xs text-muted-foreground">Quote requests</p>
+                      <ul className="flex flex-col gap-1.5">
+                        {projectQuotes.map((q) => (
+                          <li key={q.quoteRequestId} className="flex items-center justify-between gap-2">
+                            <Link href={`/contractors/${q.contractorId}`} className="truncate text-foreground hover:underline">
+                              {getContractor(q.contractorId)?.businessName ?? "A contractor"}
+                            </Link>
+                            <span className="shrink-0 text-xs text-muted-foreground">{quoteStatusLabels[q.status]}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                   {awardedContractor && (
                     <div className="rounded-lg bg-muted p-3 text-sm">

@@ -31,7 +31,7 @@ const steps = [
 
 export default function HomePage() {
   const { projects, contractors, getBidsForProject } = useMarketplace()
-  const openProjects = projects.filter((p) => p.status === "open").slice(0, 3)
+  const openProjects = projects.filter((p) => p.status === "open" && !p.invitedContractorId).slice(0, 3)
   const topContractors = [...contractors].sort((a, b) => b.rating - a.rating).slice(0, 3)
 
   return (

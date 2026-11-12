@@ -39,6 +39,23 @@ export interface Project {
   completionDate?: string
   images: string[]
   awardedContractorId?: string
+  /** Set on a private quote request: the only contractor who can see it in the app and bid. */
+  invitedContractorId?: string
+}
+
+export type QuoteRequestStatus = "pending" | "bid" | "declined"
+
+/** A client asking a contractor to bid on one of their projects. */
+export interface QuoteRequest {
+  quoteRequestId: string
+  projectId: string
+  projectTitle: string
+  clientId: string
+  clientName: string
+  contractorId: string
+  message?: string
+  status: QuoteRequestStatus
+  createdAt: string
 }
 
 export interface Bid {

@@ -34,7 +34,8 @@ export default function BrowseProjectsPage() {
         p.description.toLowerCase().includes(query.toLowerCase()) ||
         p.location.toLowerCase().includes(query.toLowerCase())
       const matchesCategory = category === "all" || p.categoryId === category
-      // Cancelled projects only show on their client's dashboard.
+      // Cancelled projects and private quote requests only show on their client's dashboard.
+      if (p.invitedContractorId) return false
       const matchesStatus = statusFilter === "all" ? p.status !== "cancelled" : p.status === statusFilter
       return matchesQuery && matchesCategory && matchesStatus
     })

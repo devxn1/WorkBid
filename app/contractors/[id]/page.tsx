@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react"
 import Link from "next/link"
 import { notFound, useRouter } from "next/navigation"
-import { ArrowLeft, Award, BadgeCheck, Briefcase, Calendar, MapPin, MessageSquare, Star } from "lucide-react"
+import { ArrowLeft, Award, BadgeCheck, Briefcase, Calendar, FileText, MapPin, MessageSquare, Star } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator"
 import { StarRating } from "@/components/shared/star-rating"
 import { ReviewDialog } from "@/components/shared/review-dialog"
 import { PreviousWork } from "@/components/contractors/previous-work"
+import { RequestQuoteDialog } from "@/components/contractors/request-quote-dialog"
 import { formatDate, initials } from "@/lib/format"
 
 export default function ContractorProfilePage({ params }: { params: Promise<{ id: string }> }) {
@@ -98,10 +99,33 @@ export default function ContractorProfilePage({ params }: { params: Promise<{ id
               </span>
             </div>
           </div>
-          <Button render={<Link href="/messages" />} className="shrink-0">
-            <MessageSquare data-icon="inline-start" />
-            Message
-          </Button>
+          <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+            {isClient ? (
+              <RequestQuoteDialog
+                contractorId={id}
+                businessName={contractor.businessName}
+                trigger={
+                  <Button>
+                    <FileText data-icon="inline-start" />
+                    Request a quote
+                  </Button>
+                }
+              />
+            ) : (
+              !authUser && (
+                <Button render={<Link href="/login" />}>
+                  <FileText data-icon="inline-start" />
+                  Sign in to request a quote
+                </Button>
+              )
+            )}
+            {authUser && (
+              <Button variant="outline" render={<Link href="/messages" />}>
+                <MessageSquare data-icon="inline-start" />
+                Messages
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 

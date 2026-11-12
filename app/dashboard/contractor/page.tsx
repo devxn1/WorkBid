@@ -2,7 +2,7 @@
 
 import { useMemo } from "react"
 import Link from "next/link"
-import { Award, CheckCircle2, Clock, Search, Star } from "lucide-react"
+import { Award, CheckCircle2, Clock, FileText, Lock, Search, Star } from "lucide-react"
 import { useMarketplace } from "@/lib/store"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -15,7 +15,7 @@ import { bidStatusLabels, formatCurrency, isOpenBid, relativeTime } from "@/lib/
 import type { Bid, Project } from "@/lib/types"
 
 export default function ContractorDashboardPage() {
-  const { currentContractorId, getContractor, getBidsByContractor, getProject } = useMarketplace()
+  const { currentContractorId, getContractor, getBidsByContractor, getProject, quoteRequests } = useMarketplace()
   const contractor = getContractor(currentContractorId)
   const myBids = useMemo(() => getBidsByContractor(currentContractorId), [getBidsByContractor, currentContractorId])
 
@@ -23,6 +23,10 @@ export default function ContractorDashboardPage() {
   const pending = myBids.filter((b) => isOpenBid(b.status))
   const won = myBids.filter((b) => b.status === "accepted")
   const winRate = myBids.length ? Math.round((won.length / myBids.length) * 100) : 0
+  // Requests still waiting on an answer, for projects that are still open.
+  const openQuotes = quoteRequests.filter(
+    (q) => q.contractorId === currentContractorId && q.status === "pending" && getProject(q.projectId)?.status === "open",
+  )
 
   if (!contractor) return null
 
@@ -50,6 +54,42 @@ export default function ContractorDashboardPage() {
         <StatCard icon={CheckCircle2} label="Win rate" value={`${winRate}%`} />
         <StatCard icon={Star} label="Rating" value={contractor.rating.toFixed(1)} hint={`${contractor.reviewCount} reviews`} />
       </div>
+
+      {openQuotes.length > 0 && (
+        <section className="mt-8 flex flex-col gap-3">
+          <h2 className="flex items-center gap-2 font-heading text-lg font-semibold text-foreground">
+            <FileText className="size-5 text-primary" aria-hidden="true" />
+            Quote requests ({openQuotes.length})
+          </h2>
+          {openQuotes.map((q) => {
+            const project = getProject(q.projectId)
+            return (
+              <Card key={q.quoteRequestId} className="transition-shadow hover:shadow-sm">
+                <Link href={`/projects/${q.projectId}`} className="block">
+                  <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        {project?.invitedContractorId && (
+                          <Badge variant="secondary" className="gap-1">
+                            <Lock width={12} height={12} aria-hidden="true" />
+                            Private
+                          </Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          From {q.clientName} · {relativeTime(q.createdAt)}
+                        </span>
+                      </div>
+                      <h3 className="truncate font-heading text-base font-semibold text-foreground">{q.projectTitle}</h3>
+                      {q.message && <p className="line-clamp-2 text-sm text-muted-foreground">{q.message}</p>}
+                    </div>
+                    <span className="shrink-0 text-sm font-medium text-primary">View &amp; bid →</span>
+                  </CardContent>
+                </Link>
+              </Card>
+            )
+          })}
+        </section>
+      )}
 
       <Tabs defaultValue="pending" className="mt-8">
         <TabsList>
