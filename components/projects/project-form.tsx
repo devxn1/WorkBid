@@ -10,6 +10,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel, FieldError } from "@/c
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CategoryIcon } from "@/components/shared/category-icon"
 import { PhotoPicker, savedPhotos, uploadPhotos, type Photo } from "@/components/shared/photo-picker"
+import { PriceSuggestion } from "@/components/projects/price-suggestion"
 
 // Stock photo per category, used when the client doesn't upload any. Keys match categoryId in lib/mock-data.ts.
 const categoryImages: Record<string, string> = {
@@ -197,6 +198,13 @@ export function ProjectForm({
           {submitted && !budgetValid && (
             <FieldError>Enter a valid range (max must be at least the min).</FieldError>
           )}
+          <PriceSuggestion
+            details={{ categoryId, title, description, location, timeline }}
+            onUse={(low, high) => {
+              setBudgetMin(String(low))
+              setBudgetMax(String(high))
+            }}
+          />
         </Field>
 
         <Field>

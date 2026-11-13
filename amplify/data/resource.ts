@@ -1,5 +1,6 @@
 import { a, defineData, type ClientSchema } from "@aws-amplify/backend"
 import { bidActions } from "../functions/bid-actions/resource"
+import { priceSuggest } from "../functions/price-suggest/resource"
 
 // The terms of a proposal, stored on every BidVersion. startDate and paymentTerms are
 // optional here only because bids placed before proposals existed don't have them.
@@ -258,6 +259,28 @@ const schema = a
     .authorization((allow) => [allow.ownerDefinedIn("userId").identityClaim("sub").to(["read", "update", "delete"])]),
 
   // Contractor submits a bid (version 1). The function sets contractorId/clientId/status itself.
+  // Suggested budget for a project the client is about to post (asks Claude).
+  PriceSuggestion: a.customType({
+    low: a.integer().required(),
+    high: a.integer().required(),
+    explanation: a.string().required(),
+    // How many past WorkBid jobs in the category it was based on.
+    comparableCount: a.integer().required(),
+  }),
+
+  suggestPriceRange: a
+    .query()
+    .arguments({
+      categoryId: a.string().required(),
+      title: a.string().required(),
+      description: a.string().required(),
+      location: a.string().required(),
+      timeline: a.string(),
+    })
+    .returns(a.ref("PriceSuggestion"))
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(priceSuggest)),
+
   placeBid: a
     .mutation()
     .arguments({ projectId: a.id().required(), ...proposalArguments })
@@ -467,8 +490,8 @@ const schema = a
       allow.ownerDefinedIn("receiverId").identityClaim("sub").to(["read"]),
     ]),
   })
-  // Lets the bid-actions function read and write every table.
-  .authorization((allow) => [allow.resource(bidActions)])
+  // bid-actions can read and write every table; price-suggest can only read.
+  .authorization((allow) => [allow.resource(bidActions), allow.resource(priceSuggest).to(["query"])])
 
 export type Schema = ClientSchema<typeof schema>
 
