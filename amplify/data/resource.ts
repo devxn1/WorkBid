@@ -264,8 +264,6 @@ const schema = a
     low: a.integer().required(),
     high: a.integer().required(),
     explanation: a.string().required(),
-    // How many past WorkBid jobs in the category it was based on.
-    comparableCount: a.integer().required(),
   }),
 
   suggestPriceRange: a
@@ -490,8 +488,8 @@ const schema = a
       allow.ownerDefinedIn("receiverId").identityClaim("sub").to(["read"]),
     ]),
   })
-  // bid-actions can read and write every table; price-suggest can only read.
-  .authorization((allow) => [allow.resource(bidActions), allow.resource(priceSuggest).to(["query"])])
+  // Lets the bid-actions function read and write every table.
+  .authorization((allow) => [allow.resource(bidActions)])
 
 export type Schema = ClientSchema<typeof schema>
 

@@ -8,7 +8,7 @@ import { orThrow } from "@/lib/proposals"
 import { formatCurrency } from "@/lib/format"
 import { Button } from "@/components/ui/button"
 
-type Suggestion = { low: number; high: number; explanation: string; comparableCount: number }
+type Suggestion = { low: number; high: number; explanation: string }
 
 /** "Suggest a price range" button under the budget fields. Asks the server (Claude) for a range. */
 export function PriceSuggestion({
@@ -75,10 +75,7 @@ export function PriceSuggestion({
           </p>
           <p className="text-sm text-muted-foreground">{suggestion.explanation}</p>
           <p className="text-xs text-muted-foreground">
-            {suggestion.comparableCount > 0
-              ? `Based on your details and ${suggestion.comparableCount} similar WorkBid ${suggestion.comparableCount === 1 ? "job" : "jobs"}.`
-              : "Based on your details and typical prices in your area."}{" "}
-            AI estimate, so actual bids can differ.
+            Based on your details and typical prices in your area. AI estimate, so actual bids can differ.
           </p>
           <Button type="button" size="sm" className="w-fit" onClick={() => onUse(suggestion.low, suggestion.high)}>
             Use this range
